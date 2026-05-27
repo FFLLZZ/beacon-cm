@@ -1,4 +1,4 @@
-﻿﻿const Version = '2026-04-10 06:03:17';
+﻿const Version = '2026-04-10 06:03:17';
 let connect;
 try {
 	({ connect } = await import('cloudflare:sockets'));
@@ -5074,6 +5074,30 @@ async function 安全列出KV记录(env, prefix, limit = 50) {
 	return values;
 }
 
+async function 安全分页列出KV(env, prefix, limit = 50, cursor = null) {
+	const values = [];
+	const page = await env.KV.list({ prefix, limit: Math.min(Math.max(1, limit), 200), cursor: cursor || undefined });
+	const allKeys = page.keys.map(k => k.name);
+	if (allKeys.length > 0) {
+		const doBatch = await DO批量获取(env, allKeys);
+		const remainingKeys = allKeys.filter(key => !(key in doBatch));
+		let kvResults = {};
+		if (remainingKeys.length > 0) {
+			await Promise.all(remainingKeys.map(async key => {
+				const text = await env.KV.get(key);
+				if (text) {
+					try { kvResults[key] = JSON.parse(text); } catch { kvResults[key] = null; }
+				}
+			}));
+		}
+		for (const key of allKeys) {
+			const value = key in doBatch ? doBatch[key] : kvResults[key];
+			if (value) { values.push(value); 内存缓存设置('kv:' + key, value); }
+		}
+	}
+	return { values, cursor: page.list_complete ? null : (page.cursor || null), listComplete: !!page.list_complete };
+}
+
 async function 安全统计键数量(env, prefix, maxCount = 1000) {
 	let cursor, count = 0;
 	const safeMax = Math.min(Math.max(1, maxCount), 5000);
@@ -5737,10 +5761,32 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 
 	if (pathname === '/admin/system/users' && request.method === 'GET') {
 		const keyword = String(url.searchParams.get('q') || '').trim().toLowerCase();
-		const users = await 安全列出KV记录(运行时.env, 安全用户前缀, Math.max(limit, 80));
+		const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
+		const pageCursor = url.searchParams.get('cursor') || null;
+		const hasFilters = !!(statusFilter || keyword);
+		const pageSize = Math.min(limit, 80);
 		const safeConfig = await 读取安全配置(运行时.env, 运行时);
-		const enrichedUsers = await Promise.all(users.map(user => 安全构建用户管理信息(运行时, url, user, nowMs, safeConfig)));
+
+		let rawUsers, nextCursor, hasMore;
+		if (hasFilters) {
+			rawUsers = await 安全列出KV记录(运行时.env, 安全用户前缀, 200);
+			nextCursor = null;
+			hasMore = false;
+		} else if (pageCursor) {
+			const page = await 安全分页列出KV(运行时.env, 安全用户前缀, pageSize, pageCursor);
+			rawUsers = page.values;
+			nextCursor = page.cursor;
+			hasMore = !page.listComplete;
+		} else {
+			const page = await 安全分页列出KV(运行时.env, 安全用户前缀, pageSize, null);
+			rawUsers = page.values;
+			nextCursor = page.cursor;
+			hasMore = !page.listComplete;
+		}
+
+		const enrichedUsers = await Promise.all(rawUsers.map(user => 安全构建用户管理信息(运行时, url, user, nowMs, safeConfig)));
 		const filteredUsers = enrichedUsers.filter((user) => {
+			if (statusFilter && String(user.status || '').toLowerCase() !== statusFilter) return false;
 			if (!keyword) return true;
 			const haystack = [
 				user.uuid,
@@ -5753,15 +5799,18 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 			].filter(Boolean).join(' ').toLowerCase();
 			return haystack.includes(keyword);
 		});
-		const sortedUsers = filteredUsers.sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0)).slice(0, limit);
+		const sortedUsers = filteredUsers.sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
+		const userCountResult = hasFilters ? null : await 安全统计键数量(运行时.env, 安全用户前缀, 5000);
 		return 安全JSON响应({
 			success: true,
 			users: sortedUsers,
+			cursor: nextCursor || null,
+			hasMore: !!hasMore,
 			summary: {
-				total: enrichedUsers.length,
+				total: userCountResult || enrichedUsers.length,
 				filtered: filteredUsers.length,
-				active: enrichedUsers.filter(item => item.status === 'active').length,
-				banned: enrichedUsers.filter(item => item.status === 'banned').length,
+				active: hasFilters ? enrichedUsers.filter(item => item.status === 'active').length : null,
+				banned: hasFilters ? enrichedUsers.filter(item => item.status === 'banned').length : null,
 			},
 		});
 	}
@@ -6626,7 +6675,7 @@ function 生成安全管理后台注入代码() {
   const titleEl = document.getElementById('admin-plus-page-title');
   const viewEl = document.getElementById('admin-plus-view');
   const tabs = Array.from(document.querySelectorAll('.admin-plus-tab'));
-  const state = { tab: 'overview', overview: null, users: null, usersSummary: null, userSearch: '', userStatusFilter: 'all', selectedUserUuid: null, selectedUserUuids: [], userAudit: [], events: null, config: null, registration: null };
+  const state = { tab: 'overview', overview: null, users: null, usersSummary: null, userSearch: '', userStatusFilter: 'all', selectedUserUuid: null, selectedUserUuids: [], userAudit: [], events: null, config: null, registration: null, usersCursor: null, usersHasMore: false };
   const cacheTime = {};
   const cacheTTL = { overview: 8000, users: 15000, events: 8000, config: 20000, registration: 10000 };
 
@@ -6689,9 +6738,17 @@ function 生成安全管理后台注入代码() {
     try {
       if (tab === 'overview') state.overview = await api('/admin/system?limit=20');
       if (tab === 'users') {
-        const userResp = await api('/admin/system/users?limit=80');
+        const statusParam = state.userStatusFilter && state.userStatusFilter !== 'all' ? ('&status=' + encodeURIComponent(state.userStatusFilter)) : '';
+        state.usersCursor = null;
+        state.usersHasMore = false;
+        const userResp = await api('/admin/system/users?limit=80' + statusParam);
         state.users = userResp.users || [];
         state.usersSummary = userResp.summary || null;
+        state.usersCursor = userResp.cursor || null;
+        state.usersHasMore = !!userResp.hasMore;
+        if (userResp.summary && userResp.summary.total != null) {
+          state.usersTotalCount = userResp.summary.total;
+        }
         syncSelectedUsers(state.users);
         await loadUserAudit();
       }
@@ -6704,6 +6761,27 @@ function 生成安全管理后台注入代码() {
     } catch (error) {
       setStatus('加载失败: ' + error.message);
       viewEl.innerHTML = '<div class="admin-plus-panel"><div class="admin-plus-empty">' + escapeHtml(error.message) + '</div></div>';
+    }
+  }
+
+  async function loadMoreUsers() {
+    if (!state.usersCursor) {
+      setStatus('没有更多用户可加载');
+      return;
+    }
+    setStatus('正在加载更多用户...');
+    try {
+      const statusParam = state.userStatusFilter && state.userStatusFilter !== 'all' ? ('&status=' + encodeURIComponent(state.userStatusFilter)) : '';
+      const userResp = await api('/admin/system/users?limit=80&cursor=' + encodeURIComponent(state.usersCursor) + statusParam);
+      const newUsers = userResp.users || [];
+      state.users = [...(state.users || []), ...newUsers];
+      state.usersCursor = userResp.cursor || null;
+      state.usersHasMore = !!userResp.hasMore;
+      syncSelectedUsers(state.users);
+      render();
+      setStatus('已加载 ' + newUsers.length + ' 名用户，共 ' + (state.users || []).length + ' 名');
+    } catch (error) {
+      setStatus('加载更多失败: ' + error.message);
     }
   }
 
@@ -6746,9 +6824,7 @@ function 生成安全管理后台注入代码() {
   function getFilteredUsers(users) {
     const source = Array.isArray(users) ? users : (Array.isArray(state.users) ? state.users : []);
     const keyword = (state.userSearch || '').trim().toLowerCase();
-    const statusFilter = String(state.userStatusFilter || 'all');
     return source.filter((item) => {
-      if (statusFilter !== 'all' && String(item && item.status || '') !== statusFilter) return false;
       if (!keyword) return true;
       const haystack = [
         item.uuid,
@@ -6846,8 +6922,8 @@ function 生成安全管理后台注入代码() {
       '<div class="admin-plus-grid">' +
         card('用户总数', summary.total || users.length || 0) +
         card('筛选结果', filteredUsers.length) +
-        card('正常用户', summary.active || 0) +
-        card('封禁用户', summary.banned || 0) +
+        card('正常用户', summary.active != null ? summary.active : '-') +
+        card('封禁用户', summary.banned != null ? summary.banned : '-') +
       '</div>',
       '<div class="admin-plus-panel"><div class="admin-plus-panel-header-wrap"><div><h3>用户列表</h3><div class="admin-plus-desc">支持按用户名、邮箱、UUID、IP 搜索，并执行批量封禁、解封和重置订阅。</div></div><div class="admin-plus-toolbar"><input id="admin-plus-user-search" class="admin-plus-inline-input" placeholder="搜索 用户名 / 邮箱 / UUID / IP" value="' + escapeHtml(state.userSearch || '') + '" /><select id="admin-plus-user-status-filter" class="admin-plus-inline-input" style="min-width:160px"><option value="all"' + (state.userStatusFilter === 'all' ? ' selected' : '') + '>全部状态</option><option value="active"' + (state.userStatusFilter === 'active' ? ' selected' : '') + '>正常</option><option value="banned"' + (state.userStatusFilter === 'banned' ? ' selected' : '') + '>已封禁</option></select><button class="admin-plus-btn secondary" type="button" id="admin-plus-select-filtered">全选当前筛选</button><button class="admin-plus-btn secondary" type="button" id="admin-plus-clear-selection">清空选择</button><a class="admin-plus-btn secondary" href="/register" target="_blank" rel="noreferrer">打开用户面板</a></div></div><div class="admin-plus-empty" style="padding:16px 20px;align-items:flex-start;text-align:left">已选择 ' + escapeHtml(selectedCount) + ' 个用户，可直接执行批量动作。<div class="admin-plus-actions"><button class="admin-plus-btn warn" type="button" data-batch-action="ban">批量封禁</button><button class="admin-plus-btn" type="button" data-batch-action="restore">批量解封</button><button class="admin-plus-btn secondary" type="button" data-batch-action="reset-subscription">批量重置订阅</button></div></div>',
       renderTable(['选择', '用户名', '邮箱', 'UUID', '状态', '最近活跃', '操作'], filteredUsers.map(item => [
@@ -6868,6 +6944,7 @@ function 生成安全管理后台注入代码() {
         '</div>'
       ])),
       '</div>'
+      + '<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px"><span style="color:var(--ap-text-muted);font-size:13px">当前显示 ' + escapeHtml(users.length || 0) + ' 名用户' + (state.usersTotalCount && !state.userStatusFilter ? (' / 共 ' + escapeHtml(state.usersTotalCount) + ' 名') : '') + '</span>' + (state.usersHasMore ? '<button class="admin-plus-btn secondary" id="admin-plus-load-more" type="button"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg> 加载更多</button>' : '') + (state.usersHasMore ? '' : '<span style="color:var(--ap-text-muted);font-size:13px">已显示全部用户</span>') + '</div>'
       ,
       selectedUser ? (
         '<div class="admin-plus-panel"><div class="admin-plus-panel-header"><h3>用户详情</h3><div class="admin-plus-actions">' +
@@ -7069,9 +7146,20 @@ function 生成安全管理后台注入代码() {
       render();
     };
     const userStatusFilter = document.getElementById('admin-plus-user-status-filter');
-    if (userStatusFilter) userStatusFilter.onchange = () => {
+    if (userStatusFilter) userStatusFilter.onchange = async () => {
       state.userStatusFilter = userStatusFilter.value || 'all';
-      render();
+      state.selectedUserUuids = [];
+      state.users = null;
+      state.usersCursor = null;
+      state.usersHasMore = false;
+      state.usersTotalCount = 0;
+      await loadTab('users', true);
+    };
+    const loadMoreBtn = document.getElementById('admin-plus-load-more');
+    if (loadMoreBtn) loadMoreBtn.onclick = async () => {
+      loadMoreBtn.disabled = true;
+      loadMoreBtn.textContent = '加载中...';
+      await loadMoreUsers();
     };
     const selectFilteredBtn = document.getElementById('admin-plus-select-filtered');
     if (selectFilteredBtn) selectFilteredBtn.onclick = () => {
