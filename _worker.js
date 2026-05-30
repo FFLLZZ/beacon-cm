@@ -405,6 +405,11 @@ export default {
 						}
 					}
 					return fetch(Pages静态页面 + '/login');
+ 				} else if (访问路径.startsWith('admin/security/')) {//安全管理静态资源透传
+					const cookies = request.headers.get('Cookie') || '';
+					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
+					if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
+					return fetch(Pages静态页面 + '/' + 访问路径 + url.search);
  				} else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {//验证cookie后响应管理页面
 					const cookies = request.headers.get('Cookie') || '';
 					const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
