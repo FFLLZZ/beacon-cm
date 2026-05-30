@@ -552,13 +552,9 @@ export default {
 				const contentType = 后台响应.headers.get('content-type') || '';
 				if (contentType.includes('text/html')) {
 					const 后台HTML = await 后台响应.text();
-					const fabHTML = '<a href="/admin/security" id="admin-plus-fab" style="position:fixed;right:24px;bottom:24px;z-index:2147483647;background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;border:none;border-radius:999px;padding:14px 24px;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 10px 25px -5px rgba(59,130,246,0.5);text-decoration:none;display:flex;align-items:center;gap:8px;transition:all 0.3s ease"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="width:18px;height:18px"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>安全管理</a>';
-					const 输出HTML = 后台HTML.includes('</body>')
-						? 后台HTML.replace('</body>', `${fabHTML}</body>`)
-						: `${后台HTML}${fabHTML}`;
 					const headers = new Headers(后台响应.headers);
 					headers.set('Cache-Control', 'no-store');
-					return new Response(输出HTML, { status: 后台响应.status, statusText: 后台响应.statusText, headers });
+					return new Response(后台HTML, { status: 后台响应.status, statusText: 后台响应.statusText, headers });
 				}
 				return 后台响应;
 				} else if (访问路径 === 'logout' || uuidRegex.test(访问路径)) {//清除cookie并跳转到登录页面
