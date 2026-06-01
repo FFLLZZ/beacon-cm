@@ -267,14 +267,7 @@ export default {
 		const 安全上下文 = 是注册面板请求 ? null : await 安全预处理({ request, env, ctx, url, 访问IP, UA, 管理员密码, 已登录后台管理员 });
 		if (安全上下文?.response) return 安全上下文.response;
 		if (访问路径 === 'register' || 访问路径 === 'register/') {
-			if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }) });
-			const 注册状态 = 安全获取注册开放状态(当前安全配置, 安全当前时间(env));
-			return new Response(生成订阅注册面板页面(url, {
-				available: Boolean(env.KV && typeof env.KV.get === 'function'),
-				errorMessage: env.KV && typeof env.KV.get === 'function' ? '' : '未绑定 KV 存储',
-				signupAvailable: Boolean(env.KV && typeof env.KV.get === 'function') && 注册状态.open,
-				signupMessage: 注册状态.message,
-			}), { status: 200, headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' } });
+			return fetch(Pages静态页面 + '/register' + url.search);
 		}
 		if (访问路径 === 'register/api' || 访问路径 === 'register/api/') {
 			try {
