@@ -5437,6 +5437,7 @@ async function 安全列出KV记录(env, prefix, limit = 50) {
 				lastSeenAt: row.lastSeenAt, bannedAt: row.bannedAt, bannedReason: row.bannedReason,
 				subscriptionToken: row.subscriptionToken, subscriptionTokenUpdatedAt: row.subscriptionTokenUpdatedAt,
 				subscriptionState: row.subscriptionState,
+				traffic: row.traffic || 0, used_traffic: row.used_traffic || 0, expiry: row.expiry || 0,
 				attributes: (() => { try { return JSON.parse(row.attributes||'{}'); } catch { return {}; } })(),
 			}));
 			内存缓存设置(cacheKey, users);
@@ -5493,6 +5494,7 @@ async function 安全分页列出KV(env, prefix, limit = 50, cursor = null) {
 				lastSeenAt: row.lastSeenAt, bannedAt: row.bannedAt, bannedReason: row.bannedReason,
 				subscriptionToken: row.subscriptionToken, subscriptionTokenUpdatedAt: row.subscriptionTokenUpdatedAt,
 				subscriptionState: row.subscriptionState,
+				traffic: row.traffic || 0, used_traffic: row.used_traffic || 0, expiry: row.expiry || 0,
 				attributes: (() => { try { return JSON.parse(row.attributes||'{}'); } catch { return {}; } })(),
 			}));
 			const hasMore = users.length === safeLimit;
