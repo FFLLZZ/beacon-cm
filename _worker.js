@@ -2203,6 +2203,7 @@ async function WebSocket发送并等待(webSocket, payload) {
 
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, userUUID = null) {
 	let header = headerData, hasData = false, reader, useBYOB = false;
+	let 连接累计字节 = 0; // per-connection total (beacon-tunnel 对齐)
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
 	const BYOB慢速刷新间隔 = 20, BYOB快速刷新间隔 = 2, BYOB安全阈值 = BYOB缓冲区大小 - BYOB单次读取上限;
 
@@ -2253,6 +2254,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 				hasData = true;
 				mainBuf = value.buffer;
 				const len = value.byteLength;
+				连接累计字节 += len;
 				if (userUUID) 批量累加流量(userUUID, len);
 
 				if (value.byteOffset !== offset) {
@@ -2283,6 +2285,12 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 		}
 	} catch (err) { closeSocketQuietly(webSocket) }
 	finally { try { reader.cancel() } catch (e) { } try { reader.releaseLock() } catch (e) { } }
+	// beacon-tunnel 对齐：直接 D1 更新 + 批量刷写
+	if (userUUID && 连接累计字节 > 0 && DB实例) {
+		try {
+			await DB实例.prepare('UPDATE users SET used_traffic=used_traffic+? WHERE uuid=?').bind(连接累计字节, userUUID).run();
+		} catch(e) { /* silent */ }
+	}
 	if (userUUID) 批量刷写流量(true).catch(() => {});
 	if (!hasData && retryFunc) await retryFunc();
 }
