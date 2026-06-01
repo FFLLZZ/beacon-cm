@@ -349,6 +349,12 @@ export default {
 				return 认证JSON响应('AUTH_SIGNIN_FAILED', `登录失败：${error?.message || '服务器内部异常'}`, null, 500);
 			}
 		}
+		if (访问路径 === 'register/config' && request.method === 'GET') {
+			const cfg = 安全运行时 ? await 读取安全配置(env, 安全运行时) : 获取默认安全配置();
+			return new Response(JSON.stringify({
+				rulesFrequency: cfg.register?.rulesFrequency || 'always',
+			}), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+		}
 		if (访问路径 === 'version') {// 版本信息接口
 			const 请求用户 = await 安全获取用户(安全运行时, url.searchParams.get('uuid'));
 			if (请求用户 && 安全用户已封禁(请求用户)) {
@@ -4131,6 +4137,7 @@ function 获取默认安全配置() {
 			scheduleEnabled: false,
 			startAt: null,
 			endAt: null,
+			rulesFrequency: 'always',
 		},
 		adminApi: {
 			listLimit: 50,
