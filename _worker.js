@@ -136,6 +136,53 @@ const 安全注册定时任务前缀 = 'sys:regtask:';
 // ===== D1 数据库 ===== (用户管理 KV → D1 迁移)
 let DB实例 = null;
 function 初始化D1(env) { if (env.DB && typeof env.DB.prepare === 'function') DB实例 = env.DB; }
+
+// ===== 批量流量累加 (60s flush, beacon-tunnel 对齐) =====
+const 流量累加池 = new Map();
+let 上次流量刷写时间 = 0, 流量刷写失败次数 = 0;
+function 批量累加流量(uuid, bytes) {
+	if (!bytes || bytes <= 0 || !uuid) return;
+	流量累加池.set(uuid, (流量累加池.get(uuid) || 0) + bytes);
+}
+async function 批量刷写流量() {
+	if (流量累加池.size === 0) return;
+	const now = Date.now();
+	if (now - 上次流量刷写时间 < 60000 && 流量累加池.size < 50) return;
+	上次流量刷写时间 = now;
+	const entries = [...流量累加池.entries()];
+	流量累加池.clear();
+	if (DB实例) {
+		try {
+			await DB实例.batch(entries.map(([u, b]) =>
+				DB实例.prepare('UPDATE users SET used_traffic=used_traffic+? WHERE uuid=?').bind(b, u)
+			));
+			流量刷写失败次数 = 0;
+		} catch(e) {
+			流量刷写失败次数++;
+			if (流量刷写失败次数 < 3) {
+				for (const [u, b] of entries) 流量累加池.set(u, (流量累加池.get(u) || 0) + b);
+			} else {
+				console.error('流量刷写连续失败3次，丢弃累计数据');
+				流量刷写失败次数 = 0;
+			}
+		}
+	}
+	// also update KV for consistency
+	try {
+		for (const [u, b] of entries) {
+			const key = 安全用户前缀 + u;
+			const text = await env_global?.KV?.get(key);
+			if (text) {
+				try {
+					const user = JSON.parse(text);
+					user.used_traffic = (user.used_traffic || 0) + b;
+					await env_global.KV.put(key, JSON.stringify(user));
+				} catch {}
+			}
+		}
+	} catch {}
+}
+let env_global = null; // set in fetch handler for KV fallback in flush
 async function 确保D1用户表() {
 	if (!DB实例) return;
 	try {
@@ -153,6 +200,9 @@ async function 确保D1用户表() {
 			subscriptionToken TEXT,
 			subscriptionTokenUpdatedAt INTEGER,
 			subscriptionState TEXT DEFAULT 'active',
+			traffic INTEGER DEFAULT 0,
+			used_traffic INTEGER DEFAULT 0,
+			expiry INTEGER DEFAULT 0,
 			attributes TEXT DEFAULT '{}'
 		)`).run();
 		await DB实例.prepare(`CREATE INDEX IF NOT EXISTS idx_users_userKey ON users(userKey)`).run();
@@ -174,6 +224,9 @@ function 用户记录转D1行(user) {
 		subscriptionToken: user.subscriptionToken || null,
 		subscriptionTokenUpdatedAt: user.subscriptionTokenUpdatedAt || null,
 		subscriptionState: user.subscriptionState || 'active',
+		traffic: user.traffic || 0,
+		used_traffic: user.used_traffic || 0,
+		expiry: user.expiry || 0,
 		attributes: JSON.stringify(user.attributes || {}),
 	};
 }
@@ -228,6 +281,7 @@ export default {
 		const UA = request.headers.get('User-Agent') || 'null';
 		const upgradeHeader = (request.headers.get('Upgrade') || '').toLowerCase(), contentType = (request.headers.get('content-type') || '').toLowerCase();
 		初始化D1(env);
+		env_global = env;
 		ctx.waitUntil(确保D1用户表());
 		const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || env.UUID || env.uuid;
 		const 加密秘钥 = env.KEY || '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改';
@@ -4687,6 +4741,9 @@ async function 安全KV读取JSON(env, key, 默认值 = null) {
 					subscriptionToken: row.subscriptionToken,
 					subscriptionTokenUpdatedAt: row.subscriptionTokenUpdatedAt,
 					subscriptionState: row.subscriptionState,
+					traffic: row.traffic || 0,
+					used_traffic: row.used_traffic || 0,
+					expiry: row.expiry || 0,
 					attributes: (() => { try { return JSON.parse(row.attributes||'{}'); } catch { return {}; } })(),
 				};
 				内存缓存设置(kvCacheKey, user);
@@ -4722,9 +4779,9 @@ async function 安全KV写入JSON(env, key, value, expirationTtl) {
 	if (DB实例 && key.startsWith(安全用户前缀) && value && typeof value === 'object') {
 		try {
 			const row = 用户记录转D1行(value);
-			await DB实例.prepare(`INSERT OR REPLACE INTO users (uuid,userKey,label,source,status,createdAt,updatedAt,lastSeenAt,bannedAt,bannedReason,subscriptionToken,subscriptionTokenUpdatedAt,subscriptionState,attributes)
-				VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`)
-				.bind(row.uuid, row.userKey, row.label, row.source, row.status, row.createdAt, row.updatedAt, row.lastSeenAt, row.bannedAt, row.bannedReason, row.subscriptionToken, row.subscriptionTokenUpdatedAt, row.subscriptionState, row.attributes)
+			await DB实例.prepare(`INSERT OR REPLACE INTO users (uuid,userKey,label,source,status,createdAt,updatedAt,lastSeenAt,bannedAt,bannedReason,subscriptionToken,subscriptionTokenUpdatedAt,subscriptionState,traffic,used_traffic,expiry,attributes)
+				VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`)
+				.bind(row.uuid, row.userKey, row.label, row.source, row.status, row.createdAt, row.updatedAt, row.lastSeenAt, row.bannedAt, row.bannedReason, row.subscriptionToken, row.subscriptionTokenUpdatedAt, row.subscriptionState, row.traffic, row.used_traffic, row.expiry, row.attributes)
 				.run();
 		} catch(e) { /* D1 失败 → 回退 KV */ }
 	}
