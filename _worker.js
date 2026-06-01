@@ -2105,7 +2105,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			if (本次发送首包) 已通过代理发送首包 = true;
 			remoteConnWrapper.socket = newSocket;
 			newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
-			connectStreams(newSocket, ws, respHeader, null);
+			connectStreams(newSocket, ws, respHeader, null, yourUUID);
 		})();
 
 		remoteConnWrapper.connectingPromise = 当前连接任务;
@@ -2136,7 +2136,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			connectStreams(initialSocket, ws, respHeader, async () => {
 				if (remoteConnWrapper.socket !== initialSocket) return;
 				await connecttoPry();
-			});
+			}, yourUUID);
 		} catch (err) {
 			log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
 			await connecttoPry();
@@ -2189,7 +2189,7 @@ async function WebSocket发送并等待(webSocket, payload) {
 	if (sendResult && typeof sendResult.then === 'function') await sendResult;
 }
 
-async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
+async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, userUUID = null) {
 	let header = headerData, hasData = false, reader, useBYOB = false;
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
 	const BYOB慢速刷新间隔 = 20, BYOB快速刷新间隔 = 2, BYOB安全阈值 = BYOB缓冲区大小 - BYOB单次读取上限;
@@ -2241,6 +2241,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 				hasData = true;
 				mainBuf = value.buffer;
 				const len = value.byteLength;
+				if (userUUID) 批量累加流量(userUUID, len);
 
 				if (value.byteOffset !== offset) {
 					log(`[BYOB] 偏移异常: 预期=${offset}, 实际=${value.byteOffset}`);
@@ -2270,6 +2271,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 		}
 	} catch (err) { closeSocketQuietly(webSocket) }
 	finally { try { reader.cancel() } catch (e) { } try { reader.releaseLock() } catch (e) { } }
+	if (userUUID) 批量刷写流量().catch(() => {});
 	if (!hasData && retryFunc) await retryFunc();
 }
 
