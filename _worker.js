@@ -144,10 +144,10 @@ function 批量累加流量(uuid, bytes) {
 	if (!bytes || bytes <= 0 || !uuid) return;
 	流量累加池.set(uuid, (流量累加池.get(uuid) || 0) + bytes);
 }
-async function 批量刷写流量() {
+async function 批量刷写流量(forceFlush = false) {
 	if (流量累加池.size === 0) return;
 	const now = Date.now();
-	if (now - 上次流量刷写时间 < 60000 && 流量累加池.size < 50) return;
+	if (!forceFlush && (now - 上次流量刷写时间 < 60000 && 流量累加池.size < 50)) return;
 	上次流量刷写时间 = now;
 	const entries = [...流量累加池.entries()];
 	流量累加池.clear();
@@ -910,6 +910,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 	const reader = request.body.getReader();
 	const 默认节点UUID = typeof yourUUID === 'string' ? yourUUID : yourUUID?.默认UUID;
 	const 安全运行时 = typeof yourUUID === 'object' ? yourUUID?.运行时 : null;
+	let 当前流量UUID = 默认节点UUID;
 	const 首包 = await 读取XHTTP首包(reader);
 	if (!首包) {
 		try { reader.releaseLock() } catch (e) { }
@@ -922,6 +923,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 		try { reader.releaseLock() } catch (e) { }
 		return new Response('Invalid request', { status: 400 });
 	}
+	当前流量UUID = 命中节点UUID;
 	if (isSpeedTestSite(首包.hostname)) {
 		try { reader.releaseLock() } catch (e) { }
 		return new Response('Forbidden', { status: 403 });
@@ -1019,6 +1021,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 					const { done, value } = await reader.read();
 					if (done) break;
 					if (!value || value.byteLength === 0) continue;
+					if (当前流量UUID) 批量累加流量(当前流量UUID, value.byteLength);
 					if (首包.isUDP) {
 						await forwardataudp(value, xhttpBridge, udpRespHeader);
 						udpRespHeader = null;
@@ -1217,6 +1220,7 @@ async function 处理gRPC请求(request, yourUUID) {
 	const reader = request.body.getReader();
 	const 默认节点UUID = typeof yourUUID === 'string' ? yourUUID : yourUUID?.默认UUID;
 	const 安全运行时 = typeof yourUUID === 'object' ? yourUUID?.运行时 : null;
+	let 当前流量UUID = 默认节点UUID;
 	const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
 	let 判断是否是木马 = null;
@@ -1396,6 +1400,7 @@ async function 处理gRPC请求(request, yourUUID) {
 								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
 								const 命中节点UUID = await 安全通过木马密码获取UUID(安全运行时, 默认节点UUID, 解析结果.passwordHash);
 								if (!命中节点UUID) throw new Error('Invalid trojan request');
+								当前流量UUID = 命中节点UUID;
 								const { port, hostname, rawClientData } = 解析结果;
 								//log(`[gRPC] 木马首包: ${hostname}:${port}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
@@ -1404,6 +1409,7 @@ async function 处理gRPC请求(request, yourUUID) {
 								const 解析结果 = 解析魏烈思请求(首包buffer);
 								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
 								if (!(await 安全是否允许节点UUID(安全运行时, 默认节点UUID, 解析结果.clientUUID))) throw new Error('Invalid vless request');
+								当前流量UUID = 解析结果.clientUUID;
 								const { port, hostname, rawIndex, version, isUDP } = 解析结果;
 								//log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
@@ -1439,6 +1445,7 @@ async function 处理gRPC请求(request, yourUUID) {
 async function 处理WS请求(request, yourUUID, url) {
 	const 默认节点UUID = typeof yourUUID === 'string' ? yourUUID : yourUUID?.默认UUID;
 	const 安全运行时 = typeof yourUUID === 'object' ? yourUUID?.运行时 : null;
+	let 当前流量UUID = 默认节点UUID; // traffic tracking
 	const WS套接字对 = new WebSocketPair();
 	const [clientSock, serverSock] = Object.values(WS套接字对);
 	serverSock.accept();
@@ -1785,6 +1792,7 @@ async function 处理WS请求(request, yourUUID, url) {
 
 	readable.pipeTo(new WritableStream({
 		async write(chunk) {
+			当前流量UUID && 批量累加流量(当前流量UUID, chunk.byteLength); // upstream counting
 			if (isDnsQuery) return await forwardataudp(chunk, serverSock, null);
 			if (判断协议类型 === 'ss') {
 				await 处理SS数据(chunk);
@@ -1811,6 +1819,7 @@ async function 处理WS请求(request, yourUUID, url) {
 				if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
 				const 命中节点UUID = await 安全通过木马密码获取UUID(安全运行时, 默认节点UUID, 解析结果.passwordHash);
 				if (!命中节点UUID) throw new Error('Invalid trojan request');
+				当前流量UUID = 命中节点UUID;
 				const { port, hostname, rawClientData } = 解析结果;
 				if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 				await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, 命中节点UUID);
@@ -1818,6 +1827,7 @@ async function 处理WS请求(request, yourUUID, url) {
 				const 解析结果 = 解析魏烈思请求(chunk);
 				if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
 				if (!(await 安全是否允许节点UUID(安全运行时, 默认节点UUID, 解析结果.clientUUID))) throw new Error('Invalid vless request');
+				当前流量UUID = 解析结果.clientUUID;
 				const { port, hostname, rawIndex, version, isUDP } = 解析结果;
 				if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 				if (isUDP) {
@@ -2273,7 +2283,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 		}
 	} catch (err) { closeSocketQuietly(webSocket) }
 	finally { try { reader.cancel() } catch (e) { } try { reader.releaseLock() } catch (e) { } }
-	if (userUUID) 批量刷写流量().catch(() => {});
+	if (userUUID) 批量刷写流量(true).catch(() => {});
 	if (!hasData && retryFunc) await retryFunc();
 }
 
