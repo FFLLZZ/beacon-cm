@@ -846,11 +846,14 @@ test('unlimited users are not eligible for daily checkin', async () => {
   const user = await __adminPlus.安全创建用户(runtime, {
     userKey: 'unlimited-checkin-user',
     label: '不限量用户',
-    traffic: 0,
   }, '198.51.100.51', 'Mozilla/5.0', 1710000000000);
+  const unlimitedUser = await __adminPlus.安全设置用户总限额(runtime, user.uuid, {
+    mode: 'unlimited',
+    resetUsedTraffic: false,
+  }, { source: 'test' }, 1710000000100);
 
-  const checkin = __adminPlus.安全构建签到信息(user, 1710000000000);
-  const result = await __adminPlus.安全执行每日签到(runtime, user, { source: 'test' }, 1710000000000);
+  const checkin = __adminPlus.安全构建签到信息(unlimitedUser, 1710000000100);
+  const result = await __adminPlus.安全执行每日签到(runtime, unlimitedUser, { source: 'test' }, 1710000000100);
 
   assert.equal(checkin.eligible, false);
   assert.equal(checkin.enabled, false);
