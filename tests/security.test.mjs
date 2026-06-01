@@ -840,6 +840,45 @@ test('public signup api reports kv daily write limit in unified format', async (
   assert.match(body.message, /今日注册写入额度已用尽/);
 });
 
+test('unlimited users are not eligible for daily checkin', async () => {
+  const env = createEnv({ SECURITY_NOW_MS: '1710000000000' });
+  const runtime = await __adminPlus.创建安全运行时(env);
+  const user = await __adminPlus.安全创建用户(runtime, {
+    userKey: 'unlimited-checkin-user',
+    label: '不限量用户',
+    traffic: 0,
+  }, '198.51.100.51', 'Mozilla/5.0', 1710000000000);
+
+  const checkin = __adminPlus.安全构建签到信息(user, 1710000000000);
+  const result = await __adminPlus.安全执行每日签到(runtime, user, { source: 'test' }, 1710000000000);
+
+  assert.equal(checkin.eligible, false);
+  assert.equal(checkin.enabled, false);
+  assert.match(checkin.message, /无需签到/);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'CHECKIN_UNLIMITED_USER');
+});
+
+test('setting fixed traffic can also reset used traffic', async () => {
+  const env = createEnv({ SECURITY_NOW_MS: '1710000000000' });
+  const runtime = await __adminPlus.创建安全运行时(env);
+  const user = await __adminPlus.安全创建用户(runtime, {
+    userKey: 'traffic-reset-user',
+    label: '限额调整用户',
+    traffic: 30 * 1024 * 1024 * 1024,
+    used_traffic: 8 * 1024 * 1024 * 1024,
+  }, '198.51.100.52', 'Mozilla/5.0', 1710000000000);
+
+  const updated = await __adminPlus.安全设置用户总限额(runtime, user.uuid, {
+    mode: 'fixed',
+    trafficGB: 50,
+    resetUsedTraffic: true,
+  }, { source: 'test' }, 1710000001000);
+
+  assert.equal(updated.traffic, 50 * 1024 * 1024 * 1024);
+  assert.equal(updated.used_traffic, 0);
+});
+
 test('pre-processing allows normal traffic without rate limiting', async () => {
   const env = createEnv({ SECURITY_NOW_MS: '1710000000000' });
   await enableSecurity(env, {

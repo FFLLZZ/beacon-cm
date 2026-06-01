@@ -4520,11 +4520,15 @@ function 安全构建签到信息(user = {}, nowMs = Date.now()) {
 	const attributes = user && typeof user.attributes === 'object' && user.attributes ? user.attributes : {};
 	const dailyCheckin = attributes.dailyCheckin && typeof attributes.dailyCheckin === 'object' ? attributes.dailyCheckin : {};
 	const todayKey = 安全获取签到日期键(nowMs);
+	const trafficLimit = 安全数值(user?.traffic, 0, 0);
+	const eligible = trafficLimit > 0;
 	return {
-		enabled: true,
+		enabled: eligible,
+		eligible,
 		minRewardGB: 2,
 		maxRewardGB: 20,
 		todayKey,
+		message: eligible ? '' : '无限制总配额用户无需签到。',
 		claimedToday: dailyCheckin.lastDateKey === todayKey,
 		lastDateKey: dailyCheckin.lastDateKey || '',
 		claimedAt: 安全时间戳(dailyCheckin.claimedAt, 0) || 0,
@@ -5475,6 +5479,9 @@ async function 安全执行每日签到(运行时, user, meta = {}, nowMs = Date
 		return { ok: false, code: 'AUTH_USER_NOT_FOUND', message: '用户不存在。', status: 404 };
 	}
 	const 当前签到信息 = 安全构建签到信息(user, nowMs);
+	if (!当前签到信息.eligible) {
+		return { ok: false, code: 'CHECKIN_UNLIMITED_USER', message: '无限制总配额用户无需签到。', status: 409, user, checkin: 当前签到信息 };
+	}
 	if (当前签到信息.claimedToday) {
 		return { ok: false, code: 'CHECKIN_ALREADY_CLAIMED', message: '今天已经签到过了，明天再来领取吧。', status: 409, user, checkin: 当前签到信息 };
 	}
@@ -5643,6 +5650,49 @@ async function 安全重置用户订阅令牌(运行时, uuid, meta = {}, nowMs 
 			reason: meta.reason || 'admin',
 			source: meta.source || 'admin-panel',
 			tokenMode: 'managed',
+		},
+		createdAt: nowMs,
+	});
+	return saved;
+}
+
+async function 安全设置用户总限额(运行时, uuid, options = {}, meta = {}, nowMs = Date.now()) {
+	const user = await 安全获取用户(运行时, uuid);
+	if (!user) return null;
+	const mode = String(options.mode || '').trim().toLowerCase();
+	const resetUsedTraffic = !!options.resetUsedTraffic;
+	let nextTraffic = null;
+	let modeLabel = '';
+	if (mode === 'unlimited') {
+		nextTraffic = 0;
+		modeLabel = 'unlimited';
+	} else if (mode === 'fixed') {
+		const trafficGB = Number(options.trafficGB);
+		if (!Number.isFinite(trafficGB) || trafficGB <= 0) {
+			throw new Error('固定总限额必须大于 0 GB');
+		}
+		nextTraffic = Math.round(trafficGB * 1024 * 1024 * 1024);
+		modeLabel = 'fixed';
+	} else {
+		throw new Error('总限额模式不支持');
+	}
+	user.traffic = nextTraffic;
+	if (resetUsedTraffic) user.used_traffic = 0;
+	user.updatedAt = nowMs;
+	const saved = await 安全保存用户记录(运行时, user, nowMs);
+	await 安全记录事件(运行时, {
+		eventType: 'user.traffic.updated',
+		subjectType: 'uuid',
+		subjectId: saved.uuid,
+		ip: meta.ip || null,
+		payload: {
+			mode: modeLabel,
+			traffic: saved.traffic || 0,
+			trafficGB: modeLabel === 'fixed' ? Number(options.trafficGB) : null,
+			resetUsedTraffic,
+			usedTraffic: saved.used_traffic || 0,
+			reason: meta.reason || 'admin-traffic-updated',
+			source: meta.source || 'admin-panel',
 		},
 		createdAt: nowMs,
 	});
@@ -6480,6 +6530,25 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 		return 安全JSON响应({ success: true, user });
 	}
 
+	if (pathname === '/admin/system/users/traffic' && request.method === 'POST') {
+		const payload = await request.json().catch(() => ({}));
+		if (!安全UUID有效(payload.uuid)) return 安全JSON响应({ success: false, error: 'uuid 不能为空且必须合法' }, 400);
+		try {
+			const user = await 安全执行用户管理动作(运行时, url, 'set-traffic', payload.uuid, {
+				ip: 访问IP,
+				reason: payload.reason || 'admin-traffic-updated',
+				source: 'admin-api',
+				trafficMode: payload.mode,
+				trafficGB: payload.trafficGB,
+				resetUsedTraffic: !!payload.resetUsedTraffic,
+			}, nowMs);
+			if (!user) return 安全JSON响应({ success: false, error: '未找到对应用户' }, 404);
+			return 安全JSON响应({ success: true, user });
+		} catch (error) {
+			return 安全JSON响应({ success: false, error: error?.message || '设置总限额失败' }, 400);
+		}
+	}
+
 	if (pathname === '/admin/system/users/delete' && request.method === 'POST') {
 		const payload = await request.json().catch(() => ({}));
 		if (!安全UUID有效(payload.uuid)) return 安全JSON响应({ success: false, error: 'uuid 不能为空且必须合法' }, 400);
@@ -6614,6 +6683,11 @@ async function 安全构建用户管理信息(运行时, url, user, nowMs, confi
 		...user,
 		profile,
 		node: await 安全构建节点订阅信息(url, user),
+		trafficSummary: {
+			total: user.traffic || 0,
+			used: user.used_traffic || 0,
+			unlimited: !user.traffic || user.traffic <= 0,
+		},
 		status,
 		subscription: {
 			status: subscriptionStatus,
@@ -6660,6 +6734,7 @@ function 安全是否用户管理事件(eventType = '') {
 		'user.banned',
 		'user.restored',
 		'user.deleted',
+		'user.traffic.updated',
 		'user.subscription.reset',
 		'user.batch.completed',
 	].includes(String(eventType || ''));
@@ -6686,6 +6761,12 @@ async function 安全执行用户管理动作(运行时, url, action, uuid, meta
 		user = await 安全设置用户订阅状态(运行时, normalizedUuid, true, meta, nowMs);
 	} else if (action === 'delete') {
 		user = await 安全删除用户账号(运行时, normalizedUuid, meta, nowMs);
+	} else if (action === 'set-traffic') {
+		user = await 安全设置用户总限额(运行时, normalizedUuid, {
+			mode: meta.trafficMode,
+			trafficGB: meta.trafficGB,
+			resetUsedTraffic: meta.resetUsedTraffic,
+		}, meta, nowMs);
 	} else if (action === 'reset-subscription') {
 		user = await 安全重置用户订阅令牌(运行时, normalizedUuid, meta, nowMs);
 	} else {
@@ -8258,6 +8339,15 @@ function 生成安全管理后台注入代码() {
   };
   const escapeHtml = (value) => String(value == null ? '' : value)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const fmtBytesAdmin = (value) => {
+    const num = Number(value || 0);
+    if (!num || num <= 0) return '0 B';
+    const k = 1024;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(units.length - 1, Math.floor(Math.log(num) / Math.log(k)));
+    return parseFloat((num / Math.pow(k, i)).toFixed(1)) + ' ' + units[i];
+  };
+  const fmtQuotaAdmin = (value) => Number(value || 0) > 0 ? fmtBytesAdmin(value) : '不限量';
   async function api(url, options) {
     const resp = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options || {}));
     const text = await resp.text();
@@ -8379,6 +8469,127 @@ function 生成安全管理后台注入代码() {
     }).join('') + '</div>';
   }
 
+  function closeTrafficLimitDialog() {
+    const modal = document.getElementById('admin-plus-traffic-modal');
+    if (modal) modal.remove();
+  }
+
+  function openTrafficLimitDialog(user) {
+    if (!user || !user.uuid) {
+      setStatus('未找到用户信息');
+      return;
+    }
+    closeTrafficLimitDialog();
+    const currentTotal = fmtQuotaAdmin(user.traffic);
+    const currentUsed = fmtBytesAdmin(user.used_traffic || 0);
+    const fixedValue = user.traffic > 0 ? String(Math.max(0.01, Math.round((user.traffic / (1024 * 1024 * 1024)) * 100) / 100)) : '50';
+    const html = '<div id="admin-plus-traffic-modal" style="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px">' +
+      '<div class="admin-plus-panel" style="width:min(520px,100%);max-height:85vh;overflow:auto">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px"><h3 style="margin:0">设置总限额</h3><button class="admin-plus-btn secondary tiny" type="button" id="admin-plus-traffic-close">关闭</button></div>' +
+        '<div style="display:flex;flex-direction:column;gap:14px">' +
+          '<div><div style="font-size:13px;font-weight:700;margin-bottom:8px">当前流量信息</div><div style="color:var(--ap-text-muted);font-size:12px">当前总限额：' + escapeHtml(currentTotal) + ' / 当前已用流量：' + escapeHtml(currentUsed) + '</div></div>' +
+          '<div><div style="font-size:13px;font-weight:700;margin-bottom:8px">限额模式</div><div style="display:flex;gap:12px;flex-wrap:wrap">' +
+            '<label style="display:flex;align-items:center;gap:8px"><input type="radio" name="adminPlusTrafficMode" value="unlimited"' + (user.traffic > 0 ? '' : ' checked') + '> 不限量</label>' +
+            '<label style="display:flex;align-items:center;gap:8px"><input type="radio" name="adminPlusTrafficMode" value="fixed"' + (user.traffic > 0 ? ' checked' : '') + '> 固定限额</label>' +
+          '</div></div>' +
+          '<div><label for="admin-plus-traffic-value" style="display:block;font-size:13px;font-weight:700;margin-bottom:8px">固定限额</label><div style="display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px"><input id="admin-plus-traffic-value" class="admin-plus-inline-input" type="number" min="0.01" step="0.01" value="' + escapeHtml(fixedValue) + '" style="width:100%;min-width:0" /><select id="admin-plus-traffic-unit" class="admin-plus-inline-input" style="width:100%;min-width:0"><option value="MB">MB</option><option value="GB" selected>GB</option><option value="TB">TB</option></select></div><div style="margin-top:6px;color:var(--ap-text-muted);font-size:12px">支持 MB / GB / TB，保存时会自动换算。</div></div>' +
+          '<div style="display:flex;flex-direction:column;gap:8px">' +
+            '<label style="display:flex;align-items:center;gap:8px"><input id="admin-plus-reset-used" type="checkbox"> 同时清零已用流量</label>' +
+            '<label style="display:flex;align-items:center;gap:8px"><input id="admin-plus-apply-notice" type="checkbox" checked> 保存后立即生效提示</label>' +
+          '</div>' +
+          '<div><div style="font-size:13px;font-weight:700;margin-bottom:8px">剩余可用流量预估</div><div id="admin-plus-traffic-preview" style="color:var(--ap-text-muted);font-size:12px">按当前已用流量计算，设置后剩余可用流量将在这里显示。</div></div>' +
+          '<div style="display:flex;justify-content:flex-end;gap:10px"><button class="admin-plus-btn secondary" type="button" id="admin-plus-traffic-cancel">取消</button><button class="admin-plus-btn" type="button" id="admin-plus-traffic-save">保存设置</button></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+    const modal = document.getElementById('admin-plus-traffic-modal');
+    const valueInput = document.getElementById('admin-plus-traffic-value');
+    const unitInput = document.getElementById('admin-plus-traffic-unit');
+    const previewEl = document.getElementById('admin-plus-traffic-preview');
+    const resetUsedInput = document.getElementById('admin-plus-reset-used');
+    const formatByUnit = (value, unit) => {
+      const units = { MB: 1024 * 1024, GB: 1024 * 1024 * 1024, TB: 1024 * 1024 * 1024 * 1024 };
+      const base = units[unit] || units.GB;
+      return (Math.round((value / base) * 100) / 100) + ' ' + unit;
+    };
+    const sync = () => {
+      const mode = modal.querySelector('input[name="adminPlusTrafficMode"]:checked')?.value || 'fixed';
+      const disabled = mode !== 'fixed';
+      valueInput.disabled = disabled;
+      unitInput.disabled = disabled;
+      if (!previewEl) return;
+      if (mode === 'unlimited') {
+        previewEl.textContent = '设置为不限量后，剩余可用流量将不受总限额限制。';
+        return;
+      }
+      const value = Number(valueInput.value);
+      const unit = unitInput.value || 'GB';
+      const factor = unit === 'TB' ? 1024 : unit === 'MB' ? 1 / 1024 : 1;
+      const targetGB = value * factor;
+      if (!Number.isFinite(targetGB) || targetGB <= 0) {
+        previewEl.textContent = '请输入有效的固定限额数值后查看预估结果。';
+        return;
+      }
+      const targetBytes = targetGB * 1024 * 1024 * 1024;
+      const usedBytes = resetUsedInput.checked ? 0 : Number(user.used_traffic || 0);
+      const remainingBytes = targetBytes - usedBytes;
+      if (remainingBytes >= 0) {
+        previewEl.textContent = '按当前已用流量计算，设置后剩余约 ' + formatByUnit(remainingBytes, unit) + '。';
+      } else {
+        previewEl.textContent = '按当前已用流量计算，设置后将超额约 ' + formatByUnit(Math.abs(remainingBytes), unit) + '。';
+      }
+    };
+    modal.querySelectorAll('input[name="adminPlusTrafficMode"]').forEach((input) => input.addEventListener('change', sync));
+    valueInput.addEventListener('input', sync);
+    unitInput.addEventListener('change', sync);
+    resetUsedInput.addEventListener('change', sync);
+    sync();
+    document.getElementById('admin-plus-traffic-close').onclick = closeTrafficLimitDialog;
+    document.getElementById('admin-plus-traffic-cancel').onclick = closeTrafficLimitDialog;
+    modal.onclick = (event) => { if (event.target === modal) closeTrafficLimitDialog(); };
+    document.getElementById('admin-plus-traffic-save').onclick = async () => {
+      const mode = modal.querySelector('input[name="adminPlusTrafficMode"]:checked')?.value || 'fixed';
+      const resetUsedTraffic = !!document.getElementById('admin-plus-reset-used')?.checked;
+      const showNotice = !!document.getElementById('admin-plus-apply-notice')?.checked;
+      const body = {
+        uuid: user.uuid,
+        mode,
+        resetUsedTraffic,
+        reason: 'admin-ui-set-traffic',
+      };
+      if (mode === 'fixed') {
+        const value = Number(valueInput.value);
+        const unit = unitInput.value || 'GB';
+        const factor = unit === 'TB' ? 1024 : unit === 'MB' ? 1 / 1024 : 1;
+        body.trafficGB = value * factor;
+        if (!Number.isFinite(body.trafficGB) || body.trafficGB <= 0) {
+          setStatus('请输入有效的固定限额数值');
+          valueInput.focus();
+          return;
+        }
+      }
+      const confirmMessage = mode === 'unlimited'
+        ? ('确认将该用户的总限额设置为不限量吗？当前已用流量为 ' + currentUsed + '。')
+        : ('确认将该用户的总限额设置为 ' + valueInput.value + ' ' + unitInput.value + ' 吗？当前已用流量为 ' + currentUsed + (resetUsedTraffic ? '，并会同时清零已用流量。' : '。'));
+      if (!window.confirm(confirmMessage)) return;
+      try {
+        await api('/admin/system/users/traffic', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        closeTrafficLimitDialog();
+        const msg = mode === 'unlimited' ? '总限额已设置为不限量' : ('总限额已设置为 ' + valueInput.value + ' ' + unitInput.value);
+        setStatus(msg + (resetUsedTraffic ? '，已用流量已清零。' : ''));
+        if (showNotice) window.alert(msg + (resetUsedTraffic ? '，并已清零已用流量。' : '，已立即生效。'));
+        state.selectedUserUuid = user.uuid;
+        await loadTab('users', true);
+      } catch (error) {
+        setStatus('设置总限额失败: ' + error.message);
+      }
+    };
+  }
+
   function getFilteredUsers(users) {
     const source = Array.isArray(users) ? users : (Array.isArray(state.users) ? state.users : []);
     const keyword = (state.userSearch || '').trim().toLowerCase();
@@ -8473,13 +8684,14 @@ function 生成安全管理后台注入代码() {
         card('正常用户', summary.active != null ? summary.active : '-') +
         card('封禁用户', summary.banned != null ? summary.banned : '-') +
       '</div>',
-      '<div class="admin-plus-panel"><div class="admin-plus-panel-header-wrap"><div><h3>用户列表</h3><div class="admin-plus-desc">支持按用户名、邮箱、UUID、IP 搜索，并执行批量封禁、解封、重置订阅和删除用户。</div></div><div class="admin-plus-toolbar"><input id="admin-plus-user-search" class="admin-plus-inline-input" placeholder="搜索 用户名 / 邮箱 / UUID / IP" value="' + escapeHtml(state.userSearch || '') + '" /><select id="admin-plus-user-status-filter" class="admin-plus-inline-input" style="min-width:160px"><option value="all"' + (state.userStatusFilter === 'all' ? ' selected' : '') + '>全部状态</option><option value="active"' + (state.userStatusFilter === 'active' ? ' selected' : '') + '>正常</option><option value="banned"' + (state.userStatusFilter === 'banned' ? ' selected' : '') + '>已封禁</option></select><button class="admin-plus-btn secondary" type="button" id="admin-plus-select-filtered">全选当前筛选</button><button class="admin-plus-btn secondary" type="button" id="admin-plus-clear-selection">清空选择</button><a class="admin-plus-btn secondary" href="/register" target="_blank" rel="noreferrer">打开用户面板</a></div></div><div class="admin-plus-empty" style="padding:16px 20px;align-items:flex-start;text-align:left">已选择 ' + escapeHtml(selectedCount) + ' 个用户，可直接执行批量动作。<div class="admin-plus-actions"><button class="admin-plus-btn warn" type="button" data-batch-action="ban">批量封禁</button><button class="admin-plus-btn" type="button" data-batch-action="restore">批量解封</button><button class="admin-plus-btn secondary" type="button" data-batch-action="reset-subscription">批量重置订阅</button><button class="admin-plus-btn warn" type="button" data-batch-action="delete">批量删除</button></div></div>',
-      renderTable(['选择', '用户名', '邮箱', 'UUID', '状态', '最近活跃', '操作'], filteredUsers.map(item => [
+      '<div class="admin-plus-panel"><div class="admin-plus-panel-header-wrap"><div><h3>用户列表</h3><div class="admin-plus-desc">支持按用户名、邮箱、UUID、IP 搜索，并执行批量封禁、解封、设置总限额、重置订阅和删除用户。</div></div><div class="admin-plus-toolbar"><input id="admin-plus-user-search" class="admin-plus-inline-input" placeholder="搜索 用户名 / 邮箱 / UUID / IP" value="' + escapeHtml(state.userSearch || '') + '" /><select id="admin-plus-user-status-filter" class="admin-plus-inline-input" style="min-width:160px"><option value="all"' + (state.userStatusFilter === 'all' ? ' selected' : '') + '>全部状态</option><option value="active"' + (state.userStatusFilter === 'active' ? ' selected' : '') + '>正常</option><option value="banned"' + (state.userStatusFilter === 'banned' ? ' selected' : '') + '>已封禁</option></select><button class="admin-plus-btn secondary" type="button" id="admin-plus-select-filtered">全选当前筛选</button><button class="admin-plus-btn secondary" type="button" id="admin-plus-clear-selection">清空选择</button><a class="admin-plus-btn secondary" href="/register" target="_blank" rel="noreferrer">打开用户面板</a></div></div><div class="admin-plus-empty" style="padding:16px 20px;align-items:flex-start;text-align:left">已选择 ' + escapeHtml(selectedCount) + ' 个用户，可直接执行批量动作。<div class="admin-plus-actions"><button class="admin-plus-btn warn" type="button" data-batch-action="ban">批量封禁</button><button class="admin-plus-btn" type="button" data-batch-action="restore">批量解封</button><button class="admin-plus-btn secondary" type="button" data-batch-action="reset-subscription">批量重置订阅</button><button class="admin-plus-btn warn" type="button" data-batch-action="delete">批量删除</button></div></div>',
+      renderTable(['选择', '用户名', '邮箱', 'UUID', '状态', '总限额', '最近活跃', '操作'], filteredUsers.map(item => [
         '<input type="checkbox" data-user-toggle="' + escapeHtml(item.uuid) + '"' + (selectedSet.has(item.uuid) ? ' checked' : '') + ' />',
         escapeHtml(item.profile && item.profile.account || item.label || '-'),
         escapeHtml(item.profile && item.profile.email || '-'),
         '<code>' + escapeHtml(item.uuid || '-') + '</code>',
         '<span class="admin-plus-badge' + getUserStatusMeta(item).className + '">' + escapeHtml(getUserStatusMeta(item).label) + '</span>',
+        escapeHtml(fmtQuotaAdmin(item.traffic)),
         escapeHtml(fmtTime(item.lastSeenAt)),
         '<div class="admin-plus-actions">' +
           '<button class="admin-plus-btn secondary tiny" data-user-select="' + escapeHtml(item.uuid) + '">详情</button>' +
@@ -8488,6 +8700,7 @@ function 生成安全管理后台注入代码() {
           (item.subscription && item.subscription.status === 'banned'
             ? '<button class="admin-plus-btn tiny" data-user-action="restore" data-user-uuid="' + escapeHtml(item.uuid) + '">解封</button>'
             : '<button class="admin-plus-btn warn tiny" data-user-action="ban" data-user-uuid="' + escapeHtml(item.uuid) + '">封禁</button>') +
+          '<button class="admin-plus-btn secondary tiny" data-user-action="set-traffic" data-user-uuid="' + escapeHtml(item.uuid) + '">总限额</button>' +
           '<button class="admin-plus-btn secondary tiny" data-user-action="reset-subscription" data-user-uuid="' + escapeHtml(item.uuid) + '">重置订阅</button>' +
           '<button class="admin-plus-btn warn tiny" data-user-action="delete" data-user-uuid="' + escapeHtml(item.uuid) + '">删除</button>' +
         '</div>'
@@ -8502,6 +8715,7 @@ function 生成安全管理后台注入代码() {
           (selectedUser.subscription && selectedUser.subscription.status === 'banned'
             ? '<button class="admin-plus-btn tiny" data-user-action="restore" data-user-uuid="' + escapeHtml(selectedUser.uuid) + '">解封用户</button>'
             : '<button class="admin-plus-btn warn tiny" data-user-action="ban" data-user-uuid="' + escapeHtml(selectedUser.uuid) + '">封禁用户</button>') +
+          '<button class="admin-plus-btn secondary tiny" data-user-action="set-traffic" data-user-uuid="' + escapeHtml(selectedUser.uuid) + '">设置总限额</button>' +
           '<button class="admin-plus-btn secondary tiny" data-user-action="reset-subscription" data-user-uuid="' + escapeHtml(selectedUser.uuid) + '">轮换订阅令牌</button>' +
           '<button class="admin-plus-btn warn tiny" data-user-action="delete" data-user-uuid="' + escapeHtml(selectedUser.uuid) + '">删除用户</button>' +
         '</div></div><div class="admin-plus-detail-grid">' +
@@ -8515,6 +8729,8 @@ function 生成安全管理后台注入代码() {
           detail('更新时间', escapeHtml(fmtTime(selectedUser.lifecycle && selectedUser.lifecycle.updatedAt))) +
           detail('最近活跃', escapeHtml(fmtTime(selectedUser.lifecycle && selectedUser.lifecycle.lastSeenAt))) +
           detail('最后来源 IP', escapeHtml(selectedUser.lastIp || '-')) +
+          detail('已用流量', '<strong>' + escapeHtml(fmtBytesAdmin(selectedUser.used_traffic || 0)) + '</strong>') +
+          detail('总限额', '<strong>' + escapeHtml(fmtQuotaAdmin(selectedUser.traffic)) + '</strong>') +
           detail('令牌模式', escapeHtml(selectedUser.subscription && selectedUser.subscription.tokenMode === 'managed' ? '已托管' : '兼容旧令牌')) +
           detail('令牌更新时间', escapeHtml(fmtTime(selectedUser.subscription && selectedUser.subscription.tokenUpdatedAt))) +
           detail('封禁时间', escapeHtml(fmtTime(selectedUser.lifecycle && selectedUser.lifecycle.bannedAt))) +
@@ -8777,6 +8993,11 @@ function 生成安全管理后台注入代码() {
       const action = button.getAttribute('data-user-action');
       const uuid = button.getAttribute('data-user-uuid');
       if (!action || !uuid) return;
+      if (action === 'set-traffic') {
+        const user = (Array.isArray(state.users) ? state.users.find((item) => item.uuid === uuid) : null) || { uuid };
+        openTrafficLimitDialog(user);
+        return;
+      }
       const endpoint = action === 'ban' || action === 'disable'
         ? '/admin/system/users/ban'
         : action === 'restore'
@@ -9054,6 +9275,9 @@ export const __adminPlus = {
 	解析安全身份,
 	解析木马请求,
 	解析魏烈思请求,
+	安全构建签到信息,
+	安全执行每日签到,
+	安全设置用户总限额,
 	认证JSON响应,
 	安全预处理,
 	注入安全管理后台页面,
