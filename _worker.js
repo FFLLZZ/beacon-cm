@@ -144,10 +144,10 @@ function 批量累加流量(uuid, bytes) {
 	if (!bytes || bytes <= 0 || !uuid) return;
 	流量累加池.set(uuid, (流量累加池.get(uuid) || 0) + bytes);
 }
-async function 批量刷写流量(forceFlush = false) {
+async function 批量刷写流量() {
 	if (流量累加池.size === 0) return;
 	const now = Date.now();
-	if (!forceFlush && (now - 上次流量刷写时间 < 60000 && 流量累加池.size < 50)) return;
+	if (now - 上次流量刷写时间 < 60000 && 流量累加池.size < 50) return;
 	上次流量刷写时间 = now;
 	const entries = [...流量累加池.entries()];
 	流量累加池.clear();
@@ -288,6 +288,7 @@ export default {
 		初始化D1(env);
 		env_global = env;
 		ctx.waitUntil(确保D1用户表());
+		ctx.waitUntil(批量刷写流量()); // beacon-tunnel 对齐：每个请求触发流量刷写
 		const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || env.UUID || env.uuid;
 		const 加密秘钥 = env.KEY || '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改';
 		const userIDMD5 = await MD5MD5(管理员密码 + 加密秘钥);
@@ -2291,7 +2292,6 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 			await DB实例.prepare('UPDATE users SET used_traffic=used_traffic+? WHERE uuid=?').bind(连接累计字节, userUUID).run();
 		} catch(e) { /* silent */ }
 	}
-	if (userUUID) 批量刷写流量(true).catch(() => {});
 	if (!hasData && retryFunc) await retryFunc();
 }
 
