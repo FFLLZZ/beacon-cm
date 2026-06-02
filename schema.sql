@@ -1,5 +1,5 @@
 -- Beacon CM D1 Schema (beacon-users)
--- Run: wrangler d1 execute beacon-users --file=schema.sql
+-- Run once: wrangler d1 execute beacon-users --file=schema.sql
 
 CREATE TABLE IF NOT EXISTS users (
     uuid                          TEXT PRIMARY KEY,
@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_userKey ON users(userKey);
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+CREATE TABLE IF NOT EXISTS global_traffic (
+    id        INTEGER PRIMARY KEY DEFAULT 1,
+    up_bytes  INTEGER DEFAULT 0,
+    down_bytes INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS online_heartbeat (
+    uuid      TEXT PRIMARY KEY,
+    last_beat INTEGER
+);
 
 -- ============================================================
 -- Migration log (for existing databases that need new columns)
