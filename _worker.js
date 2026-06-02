@@ -138,6 +138,7 @@ let DB实例 = null;
 function 初始化D1(env) { if (env.DB && typeof env.DB.prepare === 'function') DB实例 = env.DB; }
 
 // ===== 全局流量统计 (D1/KV 持久化，对齐用户流量方式) =====
+let 活跃连接数 = 0;
 function 格式化字节(b) { if (!b || b <= 0) return '0 B'; const k = 1024, u = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.floor(Math.log(b) / Math.log(k)); return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + u[i]; }
 const 全局流量KV键 = 'sys:global:traffic';
 async function 读取全局流量() {
