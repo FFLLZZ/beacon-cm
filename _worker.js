@@ -42,6 +42,7 @@ class StateStore {
 		this.env = env;
 		this.cache = new Map();
 		this.cacheTimestamps = new Map();
+		this.onlineUsers = new Map(); // uuid → connectionCount
 		this.initialized = false;
 	}
 	async 初始化() {
@@ -52,6 +53,13 @@ class StateStore {
 			for (const [key, value] of Object.entries(data)) {
 				this.cache.set(key, value);
 				this.cacheTimestamps.set(key, Date.now());
+			}
+		}
+		const storedOnline = await this.storage.get('online_users');
+		if (storedOnline) {
+			const entries = JSON.parse(storedOnline);
+			for (const [uuid, count] of entries) {
+				this.onlineUsers.set(uuid, count);
 			}
 		}
 		this.initialized = true;
@@ -86,6 +94,24 @@ class StateStore {
 		for (const [key] of this.cache) data[key] = this.cache.get(key);
 		await this.storage.put('state', JSON.stringify(data));
 	}
+	async 在线加入(uuid) {
+		if (!uuid) return;
+		await this.初始化();
+		this.onlineUsers.set(uuid, (this.onlineUsers.get(uuid) || 0) + 1);
+		await this.storage.put('online_users', JSON.stringify([...this.onlineUsers]));
+	}
+	async 在线离开(uuid) {
+		if (!uuid) return;
+		await this.初始化();
+		const c = (this.onlineUsers.get(uuid) || 1) - 1;
+		if (c <= 0) this.onlineUsers.delete(uuid);
+		else this.onlineUsers.set(uuid, c);
+		await this.storage.put('online_users', JSON.stringify([...this.onlineUsers]));
+	}
+	async 在线人数() {
+		await this.初始化();
+		return this.onlineUsers.size;
+	}
 	async fetch(request) {
 		const url = new URL(request.url);
 		const action = url.searchParams.get('action');
@@ -111,6 +137,18 @@ class StateStore {
 					await this.删除(key);
 					return Response.json({ success: true });
 				}
+				case 'onlineJoin': {
+					const uuid = url.searchParams.get('uuid');
+					await this.在线加入(uuid);
+					return Response.json({ success: true, count: this.onlineUsers.size });
+				}
+				case 'onlineLeave': {
+					const uuid = url.searchParams.get('uuid');
+					await this.在线离开(uuid);
+					return Response.json({ success: true, count: this.onlineUsers.size });
+				}
+				case 'onlineCount':
+					return Response.json({ success: true, count: await this.在线人数() });
 				default:
 					return Response.json({ error: 'Unknown action' }, { status: 400 });
 			}
@@ -139,8 +177,8 @@ function 初始化D1(env) { if (env.DB && typeof env.DB.prepare === 'function') 
 
 // ===== 全局流量统计 (D1/KV 持久化，对齐用户流量方式) =====
 const 活跃用户Map = new Map(); // uuid → connectionCount
-function 用户上线(uuid) { if (!uuid) return; 活跃用户Map.set(uuid, (活跃用户Map.get(uuid) || 0) + 1); 同步在线人数(); }
-function 用户下线(uuid) { if (!uuid) return; const c = (活跃用户Map.get(uuid) || 1) - 1; if (c <= 0) 活跃用户Map.delete(uuid); else 活跃用户Map.set(uuid, c); 同步在线人数(); }
+function 用户上线(uuid) { if (!uuid) return; 活跃用户Map.set(uuid, (活跃用户Map.get(uuid) || 0) + 1); DO在线加入(env_global, uuid).catch(() => {}); 同步在线人数(); }
+function 用户下线(uuid) { if (!uuid) return; const c = (活跃用户Map.get(uuid) || 1) - 1; if (c <= 0) 活跃用户Map.delete(uuid); else 活跃用户Map.set(uuid, c); DO在线离开(env_global, uuid).catch(() => {}); 同步在线人数(); }
 function 在线人数() { return 活跃用户Map.size; }
 function 格式化字节(b) { if (!b || b <= 0) return '0 B'; const k = 1024, u = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.floor(Math.log(b) / Math.log(k)); return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + u[i]; }
 async function 同步在线人数() {
@@ -350,6 +388,32 @@ async function DO删除(env, key) {
 		await stub.fetch('http://internal/?action=delete&key=' + encodeURIComponent(key));
 		return true;
 	} catch { return false; }
+}
+async function DO在线加入(env, uuid) {
+	if (!uuid || !(await DO可用(env))) return;
+	try {
+		const id = env.STATESTORE.idFromName(DO_STATESTORE_ID);
+		const stub = env.STATESTORE.get(id);
+		await stub.fetch('http://internal/?action=onlineJoin&uuid=' + encodeURIComponent(uuid));
+	} catch {}
+}
+async function DO在线离开(env, uuid) {
+	if (!uuid || !(await DO可用(env))) return;
+	try {
+		const id = env.STATESTORE.idFromName(DO_STATESTORE_ID);
+		const stub = env.STATESTORE.get(id);
+		await stub.fetch('http://internal/?action=onlineLeave&uuid=' + encodeURIComponent(uuid));
+	} catch {}
+}
+async function DO在线人数(env) {
+	if (!(await DO可用(env))) return null;
+	try {
+		const id = env.STATESTORE.idFromName(DO_STATESTORE_ID);
+		const stub = env.STATESTORE.get(id);
+		const resp = await stub.fetch('http://internal/?action=onlineCount');
+		const data = await resp.json();
+		return typeof data.count === 'number' ? data.count : null;
+	} catch { return null; }
 }
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, or exploitation of vulnerabilities. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
 export default {
@@ -600,7 +664,10 @@ export default {
 		if (访问路径 === 'api/stats' && request.method === 'GET') {
 			const stats = await 读取全局流量();
 			let online = 在线人数();
-			if (online === 0) {
+			const doCount = await DO在线人数(env);
+			if (doCount !== null) {
+				online = doCount;
+			} else if (online === 0) {
 				try { const d = JSON.parse(await env.KV.get('sys:global:active') || '{}'); if (d.count != null && d.count > 0) online = d.count; } catch(e) {}
 			}
 			return new Response(JSON.stringify({
