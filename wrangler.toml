@@ -7,7 +7,7 @@ keep_vars = true
 binding = "KV"
 #id = ""				# 在 Cloudflare Dashboard 绑定，无需写在这里
 
-[[d1_databases]]
-binding = "DB"
-database_name = "beacon-users"
-#database_id = ""			# 在 Cloudflare Dashboard 绑定，无需写在这里
+#[[d1_databases]]
+#binding = "DB"
+#database_name = "beacon-users"
+#database_id = ""
