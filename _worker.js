@@ -2351,7 +2351,7 @@ async function WebSocket发送并等待(webSocket, payload) {
 }
 
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, userUUID = null) {
-	活跃连接数++;
+	if (!retryFunc) 活跃连接数++;
 	let header = headerData, hasData = false, reader, useBYOB = false;
 	let 连接累计字节 = 0; // per-connection total (beacon-tunnel 对齐)
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
@@ -2443,7 +2443,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 	if (userUUID && 连接累计字节 > 0) {
 		await 增加用户已用流量(userUUID, 连接累计字节);
 	}
-	活跃连接数 = Math.max(0, 活跃连接数 - 1);
+	if (!retryFunc) 活跃连接数 = Math.max(0, 活跃连接数 - 1);
 	if (!hasData && retryFunc) await retryFunc();
 }
 
