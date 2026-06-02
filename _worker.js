@@ -2263,6 +2263,7 @@ async function SSAEAD解密(cryptoKey, nonceCounter, ciphertext) {
 }
 
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
+	用户上线(yourUUID);
 	log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
 	const 连接超时毫秒 = 1000;
 	let 已通过代理发送首包 = false;
@@ -2353,6 +2354,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			if (remoteConnWrapper.connectingPromise === 当前连接任务) {
 				remoteConnWrapper.connectingPromise = null;
 			}
+			用户下线(yourUUID);
 		}
 	}
 	remoteConnWrapper.retryConnect = async () => connecttoPry(!已通过代理发送首包);
@@ -2428,7 +2430,6 @@ async function WebSocket发送并等待(webSocket, payload) {
 }
 
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, userUUID = null) {
-	用户上线(userUUID);
 	let header = headerData, hasData = false, reader, useBYOB = false;
 	let 连接累计字节 = 0; // per-connection total (beacon-tunnel 对齐)
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
@@ -2520,7 +2521,6 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 	if (userUUID && 连接累计字节 > 0) {
 		await 增加用户已用流量(userUUID, 连接累计字节);
 	}
-	用户下线(userUUID);
 	if (!hasData && retryFunc) await retryFunc();
 }
 
