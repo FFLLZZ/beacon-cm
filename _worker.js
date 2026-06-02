@@ -140,6 +140,9 @@ function 初始化D1(env) { if (env.DB && typeof env.DB.prepare === 'function') 
 // ===== 全局流量统计 (D1/KV 持久化，对齐用户流量方式) =====
 let 活跃连接数 = 0;
 function 格式化字节(b) { if (!b || b <= 0) return '0 B'; const k = 1024, u = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.floor(Math.log(b) / Math.log(k)); return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + u[i]; }
+async function 同步活跃连接数() {
+	try { await env_global?.KV?.put('sys:global:active', JSON.stringify({ count: 活跃连接数, ts: Date.now() })); } catch(e) {}
+}
 const 全局流量KV键 = 'sys:global:traffic';
 async function 读取全局流量() {
 	try {
@@ -593,10 +596,12 @@ export default {
 		}
 		if (访问路径 === 'api/stats' && request.method === 'GET') {
 			const stats = await 读取全局流量();
+			let online = 活跃连接数;
+			try { const d = JSON.parse(await env.KV.get('sys:global:active') || '{}'); if (d.count != null) online = Math.max(online, d.count || 0); } catch(e) {}
 			return new Response(JSON.stringify({
 				累计上行: 格式化字节(stats.up),
 				累计下行: 格式化字节(stats.down),
-				在线人数: 活跃连接数,
+				在线人数: online,
 			}), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
 		}
 		if (访问路径 === 'version') {// 版本信息接口
@@ -2351,7 +2356,7 @@ async function WebSocket发送并等待(webSocket, payload) {
 }
 
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, userUUID = null) {
-	if (!retryFunc) 活跃连接数++;
+	if (!retryFunc) { 活跃连接数++; 同步活跃连接数().catch(()=>{}); }
 	let header = headerData, hasData = false, reader, useBYOB = false;
 	let 连接累计字节 = 0; // per-connection total (beacon-tunnel 对齐)
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
@@ -2443,7 +2448,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 	if (userUUID && 连接累计字节 > 0) {
 		await 增加用户已用流量(userUUID, 连接累计字节);
 	}
-	if (!retryFunc) 活跃连接数 = Math.max(0, 活跃连接数 - 1);
+	if (!retryFunc) { 活跃连接数 = Math.max(0, 活跃连接数 - 1); 同步活跃连接数().catch(()=>{}); }
 	if (!hasData && retryFunc) await retryFunc();
 }
 
