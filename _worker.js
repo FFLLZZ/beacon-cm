@@ -673,10 +673,7 @@ export default {
 		if (访问路径 === 'api/stats' && request.method === 'GET') {
 			const stats = await 读取全局流量();
 			let online = 在线人数();
-			const doCount = await DO在线人数(env);
-			if (doCount !== null) {
-				online = doCount;
-			} else if (online === 0) {
+			if (online === 0) {
 				try { const d = JSON.parse(await env.KV.get('sys:global:active') || '{}'); if (d.count != null && d.count > 0) online = d.count; } catch(e) {}
 				if (online === 0 && DB实例) { try { const r = await DB实例.prepare('SELECT count FROM global_online WHERE id=1').first(); if (r) online = r.count || 0; } catch(e) {} }
 			}
