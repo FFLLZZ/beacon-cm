@@ -1,4 +1,4 @@
-﻿﻿const Version = '2026-04-10 06:03:17';
+﻿const Version = '2026-04-10 06:03:17';
 let connect;
 try {
 	({ connect } = await import('cloudflare:sockets'));
@@ -600,7 +600,9 @@ export default {
 		if (访问路径 === 'api/stats' && request.method === 'GET') {
 			const stats = await 读取全局流量();
 			let online = 在线人数();
-			try { const d = JSON.parse(await env.KV.get('sys:global:active') || '{}'); if (d.count != null) online = Math.max(online, d.count || 0); } catch(e) {}
+			if (online === 0) {
+				try { const d = JSON.parse(await env.KV.get('sys:global:active') || '{}'); if (d.count != null && d.count > 0) online = d.count; } catch(e) {}
+			}
 			return new Response(JSON.stringify({
 				累计上行: 格式化字节(stats.up),
 				累计下行: 格式化字节(stats.down),
@@ -2359,7 +2361,7 @@ async function WebSocket发送并等待(webSocket, payload) {
 }
 
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, userUUID = null) {
-	if (!retryFunc) 用户上线(userUUID);
+	用户上线(userUUID);
 	let header = headerData, hasData = false, reader, useBYOB = false;
 	let 连接累计字节 = 0; // per-connection total (beacon-tunnel 对齐)
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
@@ -2451,7 +2453,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, us
 	if (userUUID && 连接累计字节 > 0) {
 		await 增加用户已用流量(userUUID, 连接累计字节);
 	}
-	if (!retryFunc) 用户下线(userUUID);
+	用户下线(userUUID);
 	if (!hasData && retryFunc) await retryFunc();
 }
 
