@@ -531,7 +531,7 @@ export default {
 		const 安全上下文 = 是注册面板请求 ? null : await 安全预处理({ request, env, ctx, url, 访问IP, UA, 管理员密码, 已登录后台管理员 });
 		if (安全上下文?.response) return 安全上下文.response;
 		if (访问路径 === 'register' || 访问路径 === 'register/') {
-			return fetch(Pages静态页面 + '/register' + url.search);
+			return new Response(null, { status: 301, headers: { Location: '/' } });
 		}
 		if (访问路径 === 'register/api' || 访问路径 === 'register/api/') {
 			try {
