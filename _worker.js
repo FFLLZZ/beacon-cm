@@ -6719,7 +6719,12 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 		});
 		const sortedUsers = filteredUsers.sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
 		const userCountResult = hasFilters ? null : await 安全统计键数量(运行时.env, 安全用户前缀, 5000);
-		const multiAccountCount = enrichedUsers.filter(u => u.multiAccount?.isMulti).length;
+		const multiByType = {};
+		for (const [type, groups] of Object.entries(multiAccountGroups)) {
+			let count = 0;
+			for (const uuids of Object.values(groups)) { if (uuids.length > 1) count += uuids.length; }
+			if (count > 0) multiByType[type] = count;
+		}
 		return 安全JSON响应({
 			success: true,
 			users: sortedUsers,
@@ -6730,7 +6735,7 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 				filtered: filteredUsers.length,
 				active: hasFilters ? enrichedUsers.filter(item => item.status === 'active').length : null,
 				banned: hasFilters ? enrichedUsers.filter(item => item.status === 'banned').length : null,
-				multiAccountCount,
+				multiByType,
 			},
 		});
 	}
