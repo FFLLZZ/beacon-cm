@@ -5582,8 +5582,19 @@ async function 安全根据注册信息获取用户(运行时, payload = {}) {
 	const userKey = 安全提取用户唯一键(payload);
 	if (!userKey) return null;
 	const indexed = await 安全KV读取JSON(运行时.env, 安全用户索引键(userKey), null);
-	if (!安全UUID有效(indexed?.uuid)) return null;
-	return await 安全获取用户(运行时, indexed.uuid);
+	if (安全UUID有效(indexed?.uuid)) {
+		return await 安全获取用户(运行时, indexed.uuid);
+	}
+	// D1 回退：KV 索引缺失时通过 D1 的 userKey 列反查用户
+	if (DB实例) {
+		try {
+			const row = await DB实例.prepare('SELECT uuid FROM users WHERE userKey=? LIMIT 1').bind(userKey).first();
+			if (row && 安全UUID有效(row.uuid)) {
+				return await 安全获取用户(运行时, row.uuid);
+			}
+		} catch(e) { /* D1 不可用时静默回退 */ }
+	}
+	return null;
 }
 
 async function 安全获取用户(运行时, uuid) {
