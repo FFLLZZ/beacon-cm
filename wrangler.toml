@@ -7,7 +7,7 @@ keep_vars = true
 binding = "KV"
 #id = ""				# 在 Cloudflare Dashboard 绑定，无需写在这里
 
-#[[d1_databases]]
-#binding = "DB"
-#database_name = "beacon-users"
-#database_id = ""
+[[d1_databases]]
+binding = "DB"
+database_name = "beacon-tunnel-db"
+# database_id = ""   # 在 Cloudflare Dashboard → D1 → beacon-tunnel-db 中复制 ID 填入
