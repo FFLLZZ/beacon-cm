@@ -5446,7 +5446,16 @@ async function 读取安全配置(env, 运行时) {
 	const cacheKey = 'sec:config:' + (运行时?.env ? 'rt' : 'env');
 	const cached = 内存缓存获取(cacheKey, 内存缓存TTL.安全配置);
 	if (cached) return cached.value;
-	const persisted = await 安全KV读取JSON(运行时?.env || env, 安全配置缓存键, {});
+	let persisted = await 安全KV读取JSON(运行时?.env || env, 安全配置缓存键, {});
+	// D1 回退：KV 配置为空时从 D1 读取
+	if ((!persisted || Object.keys(persisted).length === 0) && DB实例) {
+		try {
+			const row = await DB实例.prepare('SELECT value FROM kv_config WHERE key=?').bind(安全配置缓存键).first();
+			if (row && row.value) {
+				try { persisted = JSON.parse(row.value); } catch(e) {}
+			}
+		} catch(e) { /* D1 不可用时静默回退 */ }
+	}
 	const result = 安全标准化配置(persisted, env);
 	内存缓存设置(cacheKey, result);
 	return result;
@@ -5455,6 +5464,16 @@ async function 读取安全配置(env, 运行时) {
 async function 保存安全配置(env, 运行时, config) {
 	const normalized = 安全标准化配置(config, env);
 	await 安全KV写入JSON(运行时.env, 安全配置缓存键, normalized);
+	// D1 同步：同时写入 D1 作为 KV 的冗余备份
+	if (DB实例) {
+		try {
+			await DB实例.prepare('CREATE TABLE IF NOT EXISTS kv_config (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)').run();
+		} catch(e) {}
+		try {
+			await DB实例.prepare('INSERT OR REPLACE INTO kv_config (key, value, updated_at) VALUES (?, ?, ?)')
+				.bind(安全配置缓存键, JSON.stringify(normalized), Date.now()).run();
+		} catch(e) { /* D1 不可用时静默回退 */ }
+	}
 	for (const key of 内存缓存.keys()) {
 		if (key.startsWith('sec:config:')) 内存缓存.delete(key);
 	}
