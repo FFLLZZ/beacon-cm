@@ -5570,7 +5570,7 @@ async function 安全确保用户存在(运行时, uuid, 元数据 = {}) {
 	};
 	user.lastSeenAt = nowMs;
 	user.updatedAt = nowMs;
-	if (元数据.ip) user.lastIp = 元数据.ip;
+	if (元数据.ip) { user.lastIp = 元数据.ip; if (!user.ips) user.ips = []; if (!user.ips.includes(元数据.ip)) user.ips.push(元数据.ip); }
 	if (元数据.userAgent) user.lastUserAgent = 元数据.userAgent;
 	if (元数据.label) user.label = 元数据.label;
 	if (userKey) user.userKey = userKey;
@@ -6694,7 +6694,7 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 			const keys = [
 				{ key: 'account', value: (u.profile?.account || '').toLowerCase() },
 				{ key: 'email', value: (u.profile?.email || '').toLowerCase() },
-				{ key: 'lastIp', value: (u.lastIp || '').toLowerCase() },
+				...(u.ips || (u.lastIp ? [u.lastIp] : [])).map(ip => ({ key: 'lastIp', value: ip.toLowerCase() })),
 				{ key: 'userKey', value: (u.userKey || '').toLowerCase() },
 			];
 			keys.forEach(({ key, value }) => {
@@ -6710,7 +6710,7 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 			const keys = [
 				{ key: 'account', value: (u.profile?.account || '').toLowerCase() },
 				{ key: 'email', value: (u.profile?.email || '').toLowerCase() },
-				{ key: 'lastIp', value: (u.lastIp || '').toLowerCase() },
+				...(u.ips || (u.lastIp ? [u.lastIp] : [])).map(ip => ({ key: 'lastIp', value: ip.toLowerCase() })),
 				{ key: 'userKey', value: (u.userKey || '').toLowerCase() },
 			];
 			keys.forEach(({ key, value }) => {
