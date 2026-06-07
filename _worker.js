@@ -213,8 +213,10 @@ async function 读取全局流量() {
 	return { up: 0, down: 0 };
 }
 
+function 北京日期() { const d = new Date(Date.now() + 8*3600*1000); return d.toISOString().slice(0, 10); }
+
 async function 读取当天流量() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = 北京日期();
     try {
         if (DB实例) {
             const row = await DB实例.prepare('SELECT up_bytes, down_bytes FROM daily_traffic WHERE date=?').bind(today).first();
@@ -228,7 +230,7 @@ async function 读取当天流量() {
     return { up: 0, down: 0 };
 }
 async function 累加当天流量(upBytes, downBytes) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = 北京日期();
     if (DB实例) {
         let ok = false;
         try {
@@ -728,8 +730,8 @@ export default {
 			return new Response(JSON.stringify({
 				累计上行: 格式化字节(stats.up),
 				累计下行: 格式化字节(stats.down),
-				当天上行: 格式化字节(daily.up),
-				当天下行: 格式化字节(daily.down),
+				本日上行: 格式化字节(daily.up),
+				本日下行: 格式化字节(daily.down),
 				在线人数: online,
 			}), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
 		}
