@@ -669,7 +669,7 @@ export default {
 		} else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
 		const 访问IP = request.headers.get('X-Real-IP') || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('True-Client-IP') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || request.headers.get('X-Cluster-Client-IP') || request.cf?.clientTcpRtt || '未知IP';
 		const 是后台管理请求 = 访问路径 === 'admin' || 访问路径.startsWith('admin/');
-			const 是注册面板请求 = 访问路径 === 'register' || 访问路径 === 'register/' || 访问路径 === 'register/api' || 访问路径 === 'register/api/' || 访问路径 === 'register/login' || 访问路径 === 'register/login/' || 访问路径 === 'register/password' || 访问路径 === 'register/password/' || 访问路径 === 'register/user' || 访问路径 === 'register/user/' || 访问路径 === 'register/checkin' || 访问路径 === 'register/checkin/' || 访问路径 === 'register/set-password' || 访问路径 === 'register/set-password/';
+			const 是注册面板请求 = 访问路径 === 'register' || 访问路径 === 'register/' || 访问路径 === 'register/api' || 访问路径 === 'register/api/' || 访问路径 === 'register/login' || 访问路径 === 'register/login/' || 访问路径 === 'register/password' || 访问路径 === 'register/password/' || 访问路径 === 'register/user' || 访问路径 === 'register/user/' || 访问路径 === 'register/checkin' || 访问路径 === 'register/checkin/' || 访问路径 === 'register/set-password' || 访问路径 === 'register/set-password/' || 访问路径 === 'register/change-password' || 访问路径 === 'register/change-password/';
 		const 已登录后台管理员 = 是后台管理请求 && await 校验后台管理员已登录(request, UA, 加密秘钥, 管理员密码);
 		const 安全运行时 = await 创建安全运行时(env);
 		const 当前安全配置 = 安全运行时 ? await 读取安全配置(env, 安全运行时) : 安全标准化配置({}, env);
@@ -1015,7 +1015,60 @@ if (访问路径 === 'register/user' || 访问路径 === 'register/user/') {
 				return 认证JSON响应('AUTH_SIGNIN_FAILED', `密码设置失败：${error?.message || '服务器内部异常'}`, null, 500);
 			}
 		}
-		if (访问路径 === 'register/checkin' || 访问路径 === 'register/checkin/') {
+		if (访问路径 === 'register/change-password' || 访问路径 === 'register/change-password/') {
+			try {
+				if (request.method !== 'POST') return 认证JSON响应('AUTH_METHOD_NOT_ALLOWED', '请求方式不支持', null, 405);
+				const 运行时 = await 创建安全运行时(env);
+				if (!运行时) return 认证JSON响应('AUTH_STORAGE_UNAVAILABLE', '存储未就绪。', null, 503);
+				const rateLimit = await 安全检查登录速率限制(运行时, 访问IP);
+				if (rateLimit.blocked) {
+					return 认证JSON响应('AUTH_RATE_LIMITED', '操作过于频繁，请15分钟后再试。', { retryAfterMs: rateLimit.retryAfterMs }, 429);
+				}
+				const 校验结果 = await 安全校验用户令牌请求(运行时, url, url.searchParams.get('uuid'), url.searchParams.get('token'));
+				if (!校验结果.ok) {
+					return 认证JSON响应(校验结果.code, 校验结果.message, 校验结果.user ? { user: { uuid: 校验结果.user.uuid }, status: 'banned' } : null, 校验结果.status);
+				}
+				const user = 校验结果.user;
+				if (!user.passwordHash) {
+					return 认证JSON响应('AUTH_PASSWORD_NOT_SET', '您的账户尚未设置密码，请先设置密码。', null, 400);
+				}
+				const payload = await 安全解析注册载荷(request);
+				const oldPassword = payload.oldPassword || '';
+				const newPassword = payload.newPassword || '';
+				const confirmPassword = payload.confirmPassword || '';
+				if (!oldPassword) return 认证JSON响应('AUTH_VALIDATION_ERROR', '原密码不能为空。', null, 400);
+				if (!newPassword) return 认证JSON响应('AUTH_VALIDATION_ERROR', '新密码不能为空。', null, 400);
+				if (newPassword.length < 8 || newPassword.length > 20) {
+					return 认证JSON响应('AUTH_PASSWORD_TOO_WEAK', '新密码长度需为8-20位。', null, 400);
+				}
+				if (!/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^a-zA-Z0-9]/.test(newPassword)) {
+					return 认证JSON响应('AUTH_PASSWORD_TOO_WEAK', '新密码需要包含字母、数字及特殊字符。', null, 400);
+				}
+				if (newPassword !== confirmPassword) {
+					return 认证JSON响应('AUTH_VALIDATION_ERROR', '两次输入的新密码不一致。', null, 400);
+				}
+				const oldPasswordValid = await 安全验证密码(oldPassword, user.passwordHash);
+				if (!oldPasswordValid) {
+					await 安全记录登录失败(运行时, 访问IP);
+					return 认证JSON响应('AUTH_INVALID_CREDENTIALS', '原密码错误。', null, 401);
+				}
+				user.passwordHash = await 安全哈希密码(newPassword);
+				user.passwordUpdatedAt = 安全当前时间(env);
+				user.updatedAt = 安全当前时间(env);
+				await 安全保存用户记录V2(运行时, user);
+				await 安全记录注册日志(运行时, 'password_changed', user.uuid, 访问IP, UA, { account: user.label }, 安全当前时间(env));
+				console.log('[操作日志] 用户通过面板修改密码:', user.label, 'IP:', 访问IP);
+				return 认证JSON响应('AUTH_PASSWORD_CHANGED', '密码修改成功，请使用新密码重新登录。', {
+					account: user.label || '',
+					uuid: user.uuid,
+					requireRelogin: true,
+				}, 200);
+			} catch (error) {
+				console.error('[面板密码修改] 接口处理失败:', error?.stack || error?.message || String(error));
+				return 认证JSON响应('AUTH_SIGNIN_FAILED', '密码修改失败：' + (error?.message || '服务器内部异常'), null, 500);
+			}
+		}
+				if (访问路径 === 'register/checkin' || 访问路径 === 'register/checkin/') {
 			try {
 				if (request.method !== 'POST') return 认证JSON响应('AUTH_METHOD_NOT_ALLOWED', '请求方式不支持', null, 405);
 				const 运行时 = await 创建安全运行时(env);
