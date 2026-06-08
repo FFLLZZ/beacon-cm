@@ -6567,7 +6567,7 @@ async function 安全列出KV记录(env, prefix, limit = 50) {
 	}
 	let cursor;
 	const values = [];
-	const safeLimit = Math.min(Math.max(1, limit), 200), scanLimit = Math.min(Math.max(safeLimit * 2, safeLimit), 400);
+	const safeLimit = Math.min(Math.max(1, limit), 5000), scanLimit = Math.min(Math.max(safeLimit * 2, safeLimit), 5000);
 	const allKeys = [];
 	while (allKeys.length < scanLimit) {
 		const page = await env.KV.list({ prefix, limit: Math.min(100, scanLimit - allKeys.length), cursor });
@@ -6627,7 +6627,7 @@ async function 安全分页列出KV(env, prefix, limit = 50, cursor = null) {
 		} catch(e) { /* D1 失败 → 回退 KV */ }
 	}
 	const values = [];
-	const page = await env.KV.list({ prefix, limit: Math.min(Math.max(1, limit), 200), cursor: cursor || undefined });
+	const page = await env.KV.list({ prefix, limit: Math.min(Math.max(1, limit), 5000), cursor: cursor || undefined });
 	const allKeys = page.keys.map(k => k.name);
 	if (allKeys.length > 0) {
 		const doBatch = await DO批量获取(env, allKeys);
