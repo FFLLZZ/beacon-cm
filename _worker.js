@@ -636,10 +636,12 @@ function AuthForm校验字段V2(mode, fields) {
 	const errors = {};
 	// 账户名校验
 	if (!account) errors.account = '用户名不能为空';
-	else if (account.length < 4 || account.length > 16) errors.account = '用户名需为4-16位';
-	else if (!/^[一-龥a-zA-Z0-9_\-]+$/.test(account)) errors.account = '用户名仅支持中英文、数字、下划线、短横线';
-	else if (/^[0-9]+$/.test(account)) errors.account = '用户名不能为纯数字';
-	else if (/^(.)\1+$/.test(account)) errors.account = '用户名不能为重复字符';
+	if (normalizedMode === 'signup') {
+		if (account.length < 4 || account.length > 16) errors.account = '用户名需为4-16位';
+		else if (!/^[一-龥a-zA-Z0-9_\-]+$/.test(account)) errors.account = '用户名仅支持中英文、数字、下划线、短横线';
+		else if (/^[0-9]+$/.test(account)) errors.account = '用户名不能为纯数字';
+		else if (/^(.)\1+$/.test(account)) errors.account = '用户名不能为重复字符';
+	}
 	// 邮箱校验
 	if (normalizedMode === 'signup') {
 		if (!email) errors.email = '邮箱不能为空';
