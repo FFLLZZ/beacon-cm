@@ -6547,7 +6547,7 @@ async function 安全列出KV记录(env, prefix, limit = 50) {
 	// D1 优先（用户列表）
 	if (DB实例 && prefix === 安全用户前缀) {
 		try {
-			const safeLimit = Math.min(Math.max(1, limit), 5000);
+			const safeLimit = Math.min(Math.max(1, limit), 10000);
 			const result = await DB实例.prepare('SELECT * FROM users ORDER BY lastSeenAt DESC LIMIT ?').bind(safeLimit).all();
 			const users = (result.results||[]).map(row => ({
 				uuid: row.uuid, userKey: row.userKey, label: row.label, source: row.source,
@@ -6567,7 +6567,7 @@ async function 安全列出KV记录(env, prefix, limit = 50) {
 	}
 	let cursor;
 	const values = [];
-	const safeLimit = Math.min(Math.max(1, limit), 5000), scanLimit = Math.min(Math.max(safeLimit * 2, safeLimit), 5000);
+	const safeLimit = Math.min(Math.max(1, limit), 10000), scanLimit = Math.min(Math.max(safeLimit * 2, safeLimit), 10000);
 	const allKeys = [];
 	while (allKeys.length < scanLimit) {
 		const page = await env.KV.list({ prefix, limit: Math.min(100, scanLimit - allKeys.length), cursor });
@@ -6606,7 +6606,7 @@ async function 安全分页列出KV(env, prefix, limit = 50, cursor = null) {
 	// D1 优先（用户分页）
 	if (DB实例 && prefix === 安全用户前缀) {
 		try {
-			const safeLimit = Math.min(Math.max(1, limit), 5000);
+			const safeLimit = Math.min(Math.max(1, limit), 10000);
 			const offset = cursor ? parseInt(cursor) : 0;
 			const result = await DB实例.prepare('SELECT * FROM users ORDER BY lastSeenAt DESC LIMIT ? OFFSET ?').bind(safeLimit, offset).all();
 			const users = (result.results||[]).map(row => ({
@@ -6627,7 +6627,7 @@ async function 安全分页列出KV(env, prefix, limit = 50, cursor = null) {
 		} catch(e) { /* D1 失败 → 回退 KV */ }
 	}
 	const values = [];
-	const page = await env.KV.list({ prefix, limit: Math.min(Math.max(1, limit), 5000), cursor: cursor || undefined });
+	const page = await env.KV.list({ prefix, limit: Math.min(Math.max(1, limit), 10000), cursor: cursor || undefined });
 	const allKeys = page.keys.map(k => k.name);
 	if (allKeys.length > 0) {
 		const doBatch = await DO批量获取(env, allKeys);
@@ -6673,7 +6673,7 @@ async function 安全统计键数量(env, prefix, maxCount = 1000) {
 function 安全按时间倒序(records = [], limit = 50, timeField = 'createdAt') {
 	return [...records]
 		.sort((a, b) => 安全数值(b?.[timeField], 0, 0) - 安全数值(a?.[timeField], 0, 0))
-		.slice(0, Math.min(Math.max(1, limit), 200));
+		.slice(0, Math.min(Math.max(1, limit), 10000));
 }
 
 function 安全过滤未过期(records = [], nowMs, timeField = 'expiresAt') {
