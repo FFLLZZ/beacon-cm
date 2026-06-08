@@ -6967,6 +6967,8 @@ async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }
 	const 当前配置 = await 读取安全配置(env, 运行时);
 	const limit = 安全数值(url.searchParams.get('limit'), 当前配置.adminApi.listLimit, 1, 200);
 
+	try {
+
 	if ((pathname === '/admin/system' || pathname === '/admin/system/overview') && request.method === 'GET') {
 		const [activeBansRaw, recentEventsRaw, userCount, users] = await Promise.all([
 			安全列出KV记录(运行时.env, 安全活跃封禁前缀, limit),
@@ -7533,6 +7535,19 @@ if (pathname === '/admin/system/users/audit' && request.method === 'GET') {
 	}
 
 	return 安全JSON响应({ success: false, error: '未找到对应管理接口' }, 404);
+	} catch (error) {
+		return 安全管理接口异常响应(error, pathname);
+	}
+}
+
+function 安全管理接口异常响应(error, pathname) {
+	console.error(`[管理接口异常] pathname=${pathname} error=`, error?.stack || error?.message || String(error));
+	return 安全JSON响应({
+		success: false,
+		error: '服务器内部异常，请稍后重试或联系管理员。',
+		detail: String(error?.message || error).slice(0, 200),
+		path: pathname || null,
+	}, 500);
 }
 
 async function 安全构建节点订阅信息(url, user) {
@@ -9277,7 +9292,16 @@ function 生成安全管理后台注入代码() {
     const resp = await fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options || {}));
     const text = await resp.text();
     let data = {};
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    try { data = text ? JSON.parse(text) : {}; } catch {
+      // 检测返回的是 HTML 错误页而非 JSON
+      const isHtml = /<!DOCTYPE\s+html|<html\b|<\s*!DOCTYPE/i.test(text);
+      if (isHtml) {
+        const preview = text.replace(/<[^>]+>/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 300);
+        console.error('[API非JSON响应]', { url, status: resp.status, contentType: resp.headers.get('Content-Type') || 'unknown', preview });
+        throw new Error('接口返回了HTML错误页面（状态码 ' + resp.status + '），请检查后端服务是否正常运行。详情见浏览器控制台。');
+      }
+      data = { raw: text };
+    }
     if (!resp.ok) throw new Error(data.error || data.message || ('请求失败: ' + resp.status));
     return data;
   }
