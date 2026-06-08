@@ -3802,7 +3802,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, panelI
 
 	if (匹配命令('bcbanned')) {
 		if (!运行时 || !运行时.env) return '系统暂不可用';
-		const users = await 安全列出KV记录(运行时.env, 'sys:user:', 50);
+		const users = await 安全列出KV记录(运行时.env, 'sys:user:', 500);
 		const banned = (users || []).filter(u => u && u.subscriptionState === 'banned');
 		if (!banned.length) return '✅ 当前没有被封禁的用户';
 		const lines = banned.map((u, i) => {
