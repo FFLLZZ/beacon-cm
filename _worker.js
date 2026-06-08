@@ -1182,14 +1182,19 @@ if (访问路径 === 'register/user' || 访问路径 === 'register/user/') {
 				const 搜索邮箱 = identifier.toLowerCase();
 				if (DB实例 && !user) {
 					try {
-						const row = await DB实例.prepare('SELECT uuid FROM users WHERE LOWER(email)=? LIMIT 1')
-							.bind(搜索邮箱).first();
-						if (row && 安全UUID有效(row.uuid)) user = await 安全获取用户(运行时, row.uuid);
+						// 先按原始大小写匹配，再按小写匹配
+						const row = await DB实例.prepare('SELECT uuid FROM users WHERE email=? LIMIT 1')
+							.bind(identifier).first();
+						if (!row) {
+							const row2 = await DB实例.prepare('SELECT uuid FROM users WHERE email=? LIMIT 1')
+								.bind(搜索邮箱).first();
+							if (row2 && 安全UUID有效(row2.uuid)) user = await 安全获取用户(运行时, row2.uuid);
+						} else if (安全UUID有效(row.uuid)) user = await 安全获取用户(运行时, row.uuid);
 					} catch(e) {}
 				}
 				if (DB实例 && !user) {
 					try {
-						const row = await DB实例.prepare("SELECT uuid FROM users WHERE LOWER(attributes) LIKE ? LIMIT 1")
+						const row = await DB实例.prepare("SELECT uuid FROM users WHERE attributes LIKE ? LIMIT 1")
 							.bind(`%${搜索邮箱}%`).first();
 						if (row && 安全UUID有效(row.uuid)) user = await 安全获取用户(运行时, row.uuid);
 					} catch(e) {}
@@ -6586,6 +6591,7 @@ async function 安全列出KV记录(env, prefix, limit = 50) {
 				subscriptionToken: row.subscriptionToken, subscriptionTokenUpdatedAt: row.subscriptionTokenUpdatedAt,
 				subscriptionState: row.subscriptionState,
 				traffic: row.traffic || 0, used_traffic: row.used_traffic || 0, expiry: row.expiry || 0,
+				email: row.email || null,
 				attributes: (() => { try { return JSON.parse(row.attributes||'{}'); } catch { return {}; } })(),
 			}));
 			if (users.length > 0) {
@@ -6646,6 +6652,7 @@ async function 安全分页列出KV(env, prefix, limit = 50, cursor = null) {
 				subscriptionToken: row.subscriptionToken, subscriptionTokenUpdatedAt: row.subscriptionTokenUpdatedAt,
 				subscriptionState: row.subscriptionState,
 				traffic: row.traffic || 0, used_traffic: row.used_traffic || 0, expiry: row.expiry || 0,
+				email: row.email || null,
 				attributes: (() => { try { return JSON.parse(row.attributes||'{}'); } catch { return {}; } })(),
 			}));
 			if (users.length > 0) {
