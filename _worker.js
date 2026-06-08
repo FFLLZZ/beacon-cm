@@ -822,9 +822,14 @@ export default {
 					}, 200);
 				}
 				const hash = await 安全哈希密码(校验结果.password);
+				let labelValue = 校验结果.account;
+				// 智能检测：当 account 是邮箱格式但未传 email 时，自动将 email 填充为 account
+				if (labelValue && /@/.test(labelValue) && !校验结果.email) {
+					校验结果.email = labelValue;
+				}
 				const newUserPayload = {
 					...payload,
-					label: 校验结果.account,
+					label: labelValue,
 					source: 'register-panel',
 					passwordHash: hash,
 					passwordSet: 1,
@@ -6060,6 +6065,9 @@ async function 安全确保用户存在(运行时, uuid, 元数据 = {}) {
 		if (元数据.email && user.email !== 元数据.email) {
 			console.error(`[数据异常] 用户 ${uuid} email 写入冲突: 元数据=${元数据.email}, 已有值=${user.email}`);
 		}
+		if (元数据.label && /@/.test(元数据.label)) {
+			console.warn(`[数据告警] 用户 ${uuid} 的 label 包含邮箱格式: ${元数据.label}`);
+		}
 	if (!existing && !user.subscriptionToken) {
 		user.subscriptionToken = 安全生成订阅访问令牌();
 		user.subscriptionTokenUpdatedAt = nowMs;
@@ -7468,7 +7476,7 @@ if (pathname === '/admin/system/users/audit' && request.method === 'GET') {
 		const dryRun = !!payload.dryRun;
 		const batchSize = Math.min(payload.batchSize || 50, 200);
 		const nowMs = 安全当前时间(env);
-		let repaired = 0, skipped = 0, errors = [];
+		let repaired = 0, skipped = 0, emailMoved = 0, errors = [];
 		const allUsers = await 安全列出KV记录(运行时.env, 安全用户前缀, batchSize);
 		for (const user of allUsers) {
 			try {
@@ -7492,7 +7500,23 @@ if (pathname === '/admin/system/users/audit' && request.method === 'GET') {
 				}
 				// 确保 attributes 中有关键字段
 				if (!user.attributes) user.attributes = {};
-				if (!user.attributes.account && user.label) { user.attributes.account = user.label; changed = true; }
+				// 🆕 智能分离：当 label 为邮箱格式但 email 为空时，迁移并尝试恢复真实用户名
+				if (user.label && /@/.test(user.label) && !user.email) {
+					user.email = user.label;
+					emailMoved++;
+					if (typeof user.userKey === 'string' && user.userKey.startsWith('register:')) {
+						const parts = user.userKey.split(':');
+						if (parts.length >= 4 && parts[2] && !/@/.test(parts[2])) {
+							user.label = parts[2];
+						} else {
+							user.label = (user.uuid || '').slice(0, 8);
+						}
+					} else {
+						user.label = (user.uuid || '').slice(0, 8);
+					}
+					changed = true;
+				}
+				if (!user.attributes.account && user.label && !/@/.test(user.label)) { user.attributes.account = user.label; changed = true; }
 				if (!user.attributes.email && user.email) { user.attributes.email = user.email; changed = true; }
 				if (changed) {
 					if (!dryRun) {
@@ -7505,7 +7529,7 @@ if (pathname === '/admin/system/users/audit' && request.method === 'GET') {
 				}
 			} catch(e) { errors.push({ uuid: user?.uuid || 'unknown', error: e.message }); }
 		}
-		return 安全JSON响应({ success: true, dryRun, total: allUsers.length, repaired, skipped, errors: errors.length ? errors : undefined });
+		return 安全JSON响应({ success: true, dryRun, total: allUsers.length, repaired, skipped, emailMoved, errors: errors.length ? errors : undefined });
 	}
 
 	return 安全JSON响应({ success: false, error: '未找到对应管理接口' }, 404);
@@ -7553,9 +7577,28 @@ function 安全提取用户展示信息(user = {}) {
 	};
 }
 
+function 安全提取用户展示信息智能(user = {}) {
+	const base = 安全提取用户展示信息(user);
+	// 智能解耦：当 account 为邮箱格式但 email 为空时，将邮箱值从 account 迁移到 email
+	if (base.account && /@/.test(base.account) && !base.email) {
+		base.email = base.account;
+		// 尝试从 userKey 恢复真实用户名
+		if (typeof user.userKey === 'string' && user.userKey.startsWith('register:')) {
+			const parts = user.userKey.split(':');
+			if (parts.length >= 4 && parts[2] && !/@/.test(parts[2])) {
+				base.account = parts[2];
+			} else {
+				base.account = (user.uuid || '').slice(0, 8);
+			}
+		} else {
+			base.account = (user.uuid || '').slice(0, 8);
+		}
+	}
+	return base;
+}
+
 async function 安全构建用户管理信息(运行时, url, user, nowMs, config = null) {
-	const profile = 安全提取用户展示信息(user);
-	const activeBan = await 安全获取活跃封禁(运行时, 'uuid', user.uuid, nowMs);
+	const profile = 安全提取用户展示信息智能(user);
 	const subscriptionMonitor = await 安全获取订阅状态(运行时, user.uuid, nowMs);
 	const effectiveConfig = config || await 读取安全配置(运行时.env, 运行时);
 	const subscriptionRisk = 安全构建订阅风险信息(subscriptionMonitor, effectiveConfig, nowMs);
