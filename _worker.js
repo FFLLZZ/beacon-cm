@@ -1177,18 +1177,38 @@ if (访问路径 === 'register/user' || 访问路径 === 'register/user/') {
 			let user = null;
 			if (isUuid) {
 				user = await 安全获取用户(运行时, identifier);
-			} else {
+			} else if (isEmail) {
+				// 邮箱查找：D1 优先（email 字段 + attributes JSON），KV 回退
 				const 搜索邮箱 = identifier.toLowerCase();
-				const allUsers = await 安全列出KV记录(运行时.env, 安全用户前缀, 500);
-				for (const u of allUsers) {
-					if (!u) continue;
-					const emails = [
-						u.email,
-						(u.attributes && u.attributes.email),
-						(u.attributes && u.attributes.username),
-					].filter(Boolean).map(function(e) { return String(e).toLowerCase(); });
-					if (emails.indexOf(搜索邮箱) !== -1) { user = u; break; }
+				if (DB实例 && !user) {
+					try {
+						const row = await DB实例.prepare('SELECT uuid FROM users WHERE LOWER(email)=? LIMIT 1')
+							.bind(搜索邮箱).first();
+						if (row && 安全UUID有效(row.uuid)) user = await 安全获取用户(运行时, row.uuid);
+					} catch(e) {}
 				}
+				if (DB实例 && !user) {
+					try {
+						const row = await DB实例.prepare("SELECT uuid FROM users WHERE LOWER(attributes) LIKE ? LIMIT 1")
+							.bind(`%${搜索邮箱}%`).first();
+						if (row && 安全UUID有效(row.uuid)) user = await 安全获取用户(运行时, row.uuid);
+					} catch(e) {}
+				}
+				if (!user) {
+					const allUsers = await 安全列出KV记录(运行时.env, 安全用户前缀, 500);
+					for (const u of allUsers) {
+						if (!u) continue;
+						const emails = [
+							u.email,
+							(u.attributes && u.attributes.email),
+							(u.attributes && u.attributes.username),
+						].filter(Boolean).map(function(e) { return String(e).toLowerCase(); });
+						if (emails.indexOf(搜索邮箱) !== -1) { user = u; break; }
+					}
+				}
+			} else {
+				// 用户名查找：走现有账号查找逻辑（覆盖 D1 label + userKey + attributes + KV 索引）
+				user = await 安全根据账号获取用户(运行时, identifier);
 			}
 			if (!user) return 认证JSON响应('AUTH_USER_NOT_FOUND', '未找到与该身份标识关联的用户。', null, 404);
 			const token = 安全生成迁移令牌();
