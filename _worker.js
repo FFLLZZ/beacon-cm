@@ -3816,7 +3816,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, panelI
 
 	if (匹配命令('bcbaninfo') && arg) {
 		if (!运行时 || !运行时.env) return '系统暂不可用';
-		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 200);
+		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 500);
 		const keyword = arg.trim().toLowerCase();
 		let user = all.find(u => {
 			if (u.uuid && u.uuid.toLowerCase() === keyword) return true;
@@ -3836,7 +3836,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, panelI
 	if (匹配命令('bcunban')) {
 		if (!arg) return '❌ 请输入要解封的用户名，例如：\n<code>/bcunban someone@gmail.com</code>';
 		if (!运行时 || !运行时.env) return '系统暂不可用';
-		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 200);
+		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 500);
 		const keyword = arg.trim().toLowerCase();
 		const user = all.find(u => {
 			if (u.uuid && u.uuid.toLowerCase() === keyword) return true;
