@@ -762,34 +762,54 @@ export default {
 		// TG webhook – MUST be at top, before any other processing
 		if (访问路径 === 'tg-webhook' || 访问路径 === 'tg-webhook/' || 访问路径.startsWith('tg-webhook?')) {
 			if (request.method === 'POST') {
+				let replyToChatId = null, replyToken = null;
 				try {
 					const body = await request.json();
 					const msg = body.message || body.edited_message;
-					if (msg && msg.text && msg.chat) {
-						const chatId = msg.chat.id;
-						const TG_TXT = await env.KV.get('tg.json');
-						if (TG_TXT) {
-							const TG = JSON.parse(TG_TXT);
-							if (TG.BotToken && String(TG.ChatID || '') === String(chatId)) {
-								const prefix = TG.PanelID ? '[' + TG.PanelID + '] ' : '';
-								const 纯文本 = msg.text.split(/@\w+/)[0];
-								if (!纯文本.startsWith('/')) return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-								// Only admins/owner can use commands
-								if (msg.from && msg.chat.type !== 'private') {
-									try {
-										const memberResp = await fetch('https://api.telegram.org/bot' + TG.BotToken + '/getChatMember?' + new URLSearchParams({ chat_id: chatId, user_id: msg.from.id }));
-										const memberData = await memberResp.json();
-										const status = memberData.ok ? memberData.result?.status : '';
-										if (status !== 'creator' && status !== 'administrator') return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-									} catch(e) {}
-								}
-								const 运行时 = await 创建安全运行时(env);
-								const replyText = await 安全处理TG命令(env, 运行时, 纯文本, String(chatId));
-								if (replyText) await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, parse_mode: 'HTML', text: prefix + replyText }).toString());
-							}
-						}
+					if (!msg || !msg.text || !msg.chat) {
+						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 					}
-				} catch(e) {}
+					const chatId = msg.chat.id;
+					replyToChatId = chatId;
+					const TG_TXT = await env.KV.get('tg.json');
+					if (!TG_TXT) {
+						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+					}
+					const TG = JSON.parse(TG_TXT);
+					if (!TG.BotToken) {
+						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+					}
+					replyToken = TG.BotToken;
+					const configuredChatId = String(TG.ChatID || '');
+					if (configuredChatId && configuredChatId !== String(chatId)) {
+						await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, text: '未授权群组 ChatID: ' + chatId + ' 已配置: ' + configuredChatId }).toString());
+						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+					}
+					const 纯文本 = msg.text.split(/@\w+/)[0];
+					if (!纯文本.startsWith('/')) {
+						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+					}
+					// Only admins/owner can use commands in groups
+					if (msg.from && msg.chat.type !== 'private') {
+						try {
+							const memberResp = await fetch('https://api.telegram.org/bot' + TG.BotToken + '/getChatMember?' + new URLSearchParams({ chat_id: chatId, user_id: msg.from.id }));
+							const memberData = await memberResp.json();
+							const status = memberData.ok ? memberData.result?.status : '';
+							if (status !== 'creator' && status !== 'administrator') {
+								await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, text: '❌ 权限不足，仅群管理员可使用此命令。' }).toString());
+								return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+							}
+						} catch(e) {}
+					}
+					const 运行时 = await 创建安全运行时(env);
+					const replyText = await 安全处理TG命令(env, 运行时, 纯文本, String(chatId));
+					if (replyText) await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, parse_mode: 'HTML', text: replyText }).toString());
+				} catch(e) {
+					console.error('[TG Webhook] 处理失败:', e?.message || e);
+					if (replyToChatId && replyToken) {
+						try { await fetch('https://api.telegram.org/bot' + replyToken + '/sendMessage?' + new URLSearchParams({ chat_id: replyToChatId, text: '⚠️ 命令处理失败: ' + (e?.message || '服务器内部错误') }).toString()); } catch(e2) {}
+					}
+				}
 				return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 			}
 			if (request.method === 'GET') {
