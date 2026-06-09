@@ -781,10 +781,30 @@ export default {
 					}
 					replyToken = TG.BotToken;
 					const configuredChatId = String(TG.ChatID || '');
+					const verifyGroupId = TG.VerifyGroupID || TG.ChatID;
 					// 提取验证码参数（/start <code>）
 					const 验证码匹配 = msg.text.match(/^\/start\s+([A-Za-z0-9]{4,8})\b/);
 					if (验证码匹配) {
-						// TG验证命令：接受来自任何chat的消息
+						// TG验证命令：仅允许在已配置的官方群组内处理
+						const isVerifyGroup = verifyGroupId && String(chatId) === String(verifyGroupId);
+						const isPrivate = msg.chat.type === 'private';
+
+						if (isPrivate) {
+							// 私聊中禁用验证码处理，引导用户前往官方群组
+							let groupHint = '请先加入官方群组';
+							if (TG.GroupInviteLink) {
+								groupHint = '请通过以下链接加入官方群组：\n' + TG.GroupInviteLink;
+							}
+							await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, parse_mode: 'HTML', text: '⚠️ <b>请在官方群组内完成验证</b>\n\n注册验证仅在官方群组内进行。\n' + groupHint + '，然后在<b>群组内</b>发送验证命令。' }).toString());
+							return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+						}
+
+						if (!isVerifyGroup) {
+							// 非官方验证群组的群聊消息，静默忽略
+							return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+						}
+
+						// 在官方群组内处理验证，公开回复
 						const 运行时 = await 创建安全运行时(env);
 						const tgFrom = msg.from || null;
 						const replyText = await 安全处理TG命令(env, 运行时, msg.text, String(chatId), tgFrom);
@@ -933,11 +953,23 @@ export default {
 						try { const meR = await fetch('https://api.telegram.org/bot' + TG2.BotToken + '/getMe'); const meD = await meR.json(); if (meD.ok && meD.result?.username) botUsername = meD.result.username; } catch(e) {}
 					}
 					if (!botUsername) botUsername = 'unknown_bot';
+					// 获取群组邀请链接
+					const verifyGroupId2 = TG2.VerifyGroupID || TG2.ChatID;
+					let groupInviteLink = TG2.GroupInviteLink || '';
+					if (!groupInviteLink && verifyGroupId2) {
+						try {
+							const chatInfo = await 安全调用TG_API(TG2.BotToken, 'getChat', { chat_id: verifyGroupId2 });
+							if (chatInfo.ok && chatInfo.result?.invite_link) {
+								groupInviteLink = chatInfo.result.invite_link;
+							}
+						} catch(e) {}
+					}
 					return 认证JSON响应('AUTH_TG_VERIFY_REQUIRED', '请通过Telegram验证以完成注册。', {
 						code: verifyResult.code,
 						expiresAt: verifyResult.expiresAt,
 						timeout: verifyResult.timeout,
 						botUsername,
+						groupInviteLink,
 						account: labelValue,
 					}, 202);
 				}
@@ -4200,7 +4232,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 				return '⚠️ 该 Telegram 账号已绑定其他注册用户。';
 			}
 			await 安全记录TG绑定日志(运行时, 'tg.verify.success', null, tgUserId, tgUsername, { code, memberStatus: memberResult.status });
-			return '✅ <b>验证成功！</b>\n\n您的 Telegram 账号已通过群组成员验证。\n请返回注册页面继续完成账号信息填写。';
+			return '✅ <b>验证成功！</b>\n\n' + tgUsername + ' 已通过群组成员验证。\n注册页面将自动完成注册流程，无需手动操作。';
 		} catch (e) {
 			console.error('[TG验证] /start 验证处理失败:', e?.message || e);
 			return '⚠️ 验证处理异常，请稍后重试或联系管理员。';
