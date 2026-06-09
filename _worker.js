@@ -7086,38 +7086,6 @@ async function 安全预处理({ request, env, ctx, url, 访问IP, UA, 管理员
 	}
 }
 
-async function 处理TGWebhook({ request, env, ctx, 访问IP }) {
-	const body = await request.json().catch(() => null);
-	if (!body) return new Response('OK', { status: 200 });
-	const message = body.message || body.edited_message;
-	if (!message || !message.text || !message.chat) return new Response('OK', { status: 200 });
-	const chatId = String(message.chat.id);
-
-	let botToken = null;
-	try {
-		const TG_TXT = await env.KV.get('tg.json');
-		if (!TG_TXT) return new Response('OK', { status: 200 });
-		const TG_JSON = JSON.parse(TG_TXT);
-		if (!TG_JSON.BotToken) return new Response('OK', { status: 200 });
-		botToken = TG_JSON.BotToken;
-		const configuredChatId = String(TG_JSON.ChatID || '');
-		if (configuredChatId && configuredChatId !== chatId) {
-			await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, text: '未授权群组 ChatID: ' + chatId + ' 已配置: ' + configuredChatId }).toString());
-			return new Response('OK', { status: 200 });
-		}
-
-		const 运行时 = await 创建安全运行时(env);
-		const replyText = await 安全处理TG命令(env, 运行时, message.text, chatId);
-		await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, parse_mode: 'HTML', text: replyText }).toString());
-
-	} catch (error) {
-		if (botToken) {
-			await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, text: 'Error: ' + (error && error.message || error) }).toString());
-		}
-	}
-	return new Response('OK', { status: 200 });
-}
-
 async function 处理安全管理接口({ request, env, ctx, url, 访问IP, UA }) {
 	const 运行时 = await 创建安全运行时(env);
 	if (!运行时) return 安全JSON响应({ success: false, error: '管理存储未就绪，请先绑定 KV。' }, 503);
