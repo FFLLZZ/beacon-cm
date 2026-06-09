@@ -5567,7 +5567,7 @@ function 获取默认安全配置() {
 		},
 		tgSecurityNotifications: {
 			enabled: false,
-			verifyRequired: false,
+			verifyRequired: true,
 			verifyTimeout: 600,
 		},
 	};
