@@ -9836,7 +9836,6 @@ function 生成安全管理后台注入代码() {
   }
 
   function renderConfig() {
-    const tgState = state.tgState || {};
     const cfg = state.config || {};
     const endpoint = (cfg.thresholds && cfg.thresholds.endpoint) || {};
     const ip = (cfg.thresholds && cfg.thresholds.ip) || {};
@@ -9868,8 +9867,12 @@ function 生成安全管理后台注入代码() {
         [{v:'0.5',l:'0.5 小时'},{v:'1',l:'1 小时'},{v:'2',l:'2 小时'},{v:'4',l:'4 小时'},{v:'8',l:'8 小时'},{v:'12',l:'12 小时'},{v:'24',l:'24 小时'}]
           .map(o => '<option value="' + o.v + '">' + o.l + '</option>').join('') +
       '</select></div>' +
-      '</form><div class="admin-plus-actions" style="margin-top:20px;border-top:1px solid var(--ap-border);padding-top:20px"><button class="admin-plus-btn secondary" id="admin-plus-reset-defaults" type="button">重置为推荐值</button><button class="admin-plus-btn" id="admin-plus-save-config" type="button">应用并保存配置</button></div></div>' +
-      '<div class="admin-plus-panel" style="margin-top:0"><h3>TG Bot 通知设置</h3>' +
+      '</form><div class="admin-plus-actions" style="margin-top:20px;border-top:1px solid var(--ap-border);padding-top:20px"><button class="admin-plus-btn secondary" id="admin-plus-reset-defaults" type="button">重置为推荐值</button><button class="admin-plus-btn" id="admin-plus-save-config" type="button">应用并保存配置</button></div></div>';
+  }
+
+  function renderTG() {
+    const tgState = state.tgState || {};
+    return '<div class="admin-plus-panel" style="margin-top:0"><h3>消息通知设置</h3>' +
       '<div class="admin-plus-desc" style="margin-bottom:16px">设置 Telegram Bot 后，封禁/解封等安全事件将自动通知到你的 TG 群组，并可发送 /banned、/unban 等命令管理用户。</div>' +
       '<form id="admin-plus-tg-form" class="admin-plus-form">' +
         field('tg_bot_token', 'Bot Token', tgState.botToken, 'text') +
@@ -9977,7 +9980,7 @@ function 生成安全管理后台注入代码() {
     if (!viewEl) return;
     if (state.tab === 'overview') viewEl.innerHTML = renderOverview();
     if (state.tab === 'users') viewEl.innerHTML = renderUsers();
-    if (state.tab === 'config') viewEl.innerHTML = renderConfig();
+    if (state.tab === 'config') { viewEl.innerHTML = renderConfig() + renderTG(); }
     if (state.tab === 'registration') viewEl.innerHTML = renderRegistration();
     bindViewEvents();
   }
