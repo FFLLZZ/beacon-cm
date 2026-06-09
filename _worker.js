@@ -3883,21 +3883,61 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId) {
 
 	if (匹配命令('bcbanned')) {
 		if (!运行时 || !运行时.env) return '系统暂不可用';
-		const users = await 安全列出KV记录(运行时.env, 'sys:user:', 500);
-		const banned = (users || []).filter(u => u && u.subscriptionState === 'banned');
+		const nowMs = Date.now();
+		const [users, activeBansRaw] = await Promise.all([
+			安全列出KV记录(运行时.env, 'sys:user:', 5000),
+			安全列出KV记录(运行时.env, 安全活跃封禁前缀, 5000),
+		]);
+		// 活跃临时封禁：过滤未过期 + subjectType === 'uuid'，构建 UUID -> ban 映射
+		const activeBans = 安全过滤未过期(activeBansRaw, nowMs);
+		const activeBanByUuid = new Map();
+		const activeBanUUIDs = new Set();
+		for (const ban of activeBans) {
+			if (ban.subjectType === 'uuid' && ban.subjectId) {
+				activeBanUUIDs.add(ban.subjectId);
+				const existing = activeBanByUuid.get(ban.subjectId);
+				if (!existing || 安全数值(ban.expiresAt, 0, 0) > 安全数值(existing.expiresAt, 0, 0)) {
+					activeBanByUuid.set(ban.subjectId, ban);
+				}
+			}
+		}
+		// 合并过滤：永久封禁 + 临时封禁，按 UUID 去重
+		const seen = new Set();
+		const banned = (users || []).filter(u => {
+			if (!u) return false;
+			if (u.subscriptionState === 'banned') { seen.add(u.uuid); return true; }
+			if (activeBanUUIDs.has(u.uuid) && !seen.has(u.uuid)) { seen.add(u.uuid); return true; }
+			return false;
+		});
 		if (!banned.length) return '✅ 当前没有被封禁的用户';
 		const lines = banned.map((u, i) => {
 			const account = 提取账号(u);
-			const reason = 安全格式化封禁原因(u.bannedReason);
-			const time = u.bannedAt ? new Date(u.bannedAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '-';
-			return `<b>${i + 1}.</b> <code>${account}</code>\n    📋 ${reason}\n    ⏰ ${time}`;
+			const isPermanent = u.subscriptionState === 'banned';
+			const activeBan = activeBanByUuid.get(u.uuid);
+			let reason, time, tag;
+			if (isPermanent) {
+				reason = 安全格式化封禁原因(u.bannedReason);
+				time = u.bannedAt ? new Date(u.bannedAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '-';
+				tag = '🔒';
+			} else if (activeBan) {
+				const banTypeLabel = activeBan.reasonType === 'subscription' ? '⚡订阅超限' :
+					activeBan.reasonType === 'traffic' ? '📊流量超限' : '🚫' + (activeBan.reasonType || '限流');
+				reason = `${banTypeLabel} ${activeBan.reasonDetail || ''}`.trim();
+				time = '⏳ ' + new Date(activeBan.expiresAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+				tag = '⏳';
+			} else {
+				reason = '未知';
+				time = '-';
+				tag = '❓';
+			}
+			return `<b>${i + 1}.</b> ${tag} <code>${account}</code>\n    📋 ${reason}\n    ⏰ ${time}`;
 		});
 		return `<b>🚫 封禁用户列表 (${banned.length}人)</b>\n\n` + lines.join('\n\n');
 	}
 
 	if (匹配命令('bcbaninfo') && arg) {
 		if (!运行时 || !运行时.env) return '系统暂不可用';
-		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 500);
+		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 5000);
 		const keyword = arg.trim().toLowerCase();
 		let user = all.find(u => {
 			if (u.uuid && u.uuid.toLowerCase() === keyword) return true;
@@ -3906,18 +3946,33 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId) {
 		});
 		if (!user) return '❌ 未找到该用户。支持 UUID 或注册时使用的用户名/邮箱。';
 		const account = 提取账号(user);
-		if (user.subscriptionState !== 'banned') {
-			return `<b>✅ 用户状态正常</b>\n\n👤 账号：<code>${account}</code>`;
+		// 永久封禁
+		if (user.subscriptionState === 'banned') {
+			const reason = 安全格式化封禁原因(user.bannedReason);
+			const time = user.bannedAt ? new Date(user.bannedAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '-';
+			// 同时检查是否有活跃临时封禁
+			const activeBan = await 安全获取活跃封禁(运行时, 'uuid', user.uuid, Date.now());
+			const activeLine = activeBan
+				? `\n⏳ 同时有限流封禁：${activeBan.reasonType || '限流'} ${activeBan.reasonDetail || ''}（过期：${new Date(activeBan.expiresAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}）`
+				: '';
+			return `<b>🚫 封禁详情</b>\n\n👤 账号：<code>${account}</code>\n📋 原因：${reason}\n⏰ 封禁时间：${time}${activeLine}\n🆔 <code>${掩码UUID(user.uuid)}</code>`;
 		}
-		const reason = 安全格式化封禁原因(user.bannedReason);
-		const time = user.bannedAt ? new Date(user.bannedAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '-';
-		return `<b>🚫 封禁详情</b>\n\n👤 账号：<code>${account}</code>\n📋 原因：${reason}\n⏰ 封禁时间：${time}\n🆔 <code>${掩码UUID(user.uuid)}</code>`;
+		// 检查活跃临时封禁
+		const activeBan = await 安全获取活跃封禁(运行时, 'uuid', user.uuid, Date.now());
+		if (activeBan) {
+			const banTypeLabel = activeBan.reasonType === 'subscription' ? '订阅超限' :
+				activeBan.reasonType === 'traffic' ? '流量超限' : (activeBan.reasonType || '限流');
+			const reason = `⏳ ${banTypeLabel} — ${activeBan.reasonDetail || ''}`;
+			const expiresAt = new Date(activeBan.expiresAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+			return `<b>⏳ 临时封禁中</b>\n\n👤 账号：<code>${account}</code>\n📋 原因：${reason}\n⏰ 过期时间：${expiresAt}\n🆔 <code>${掩码UUID(user.uuid)}</code>`;
+		}
+		return `<b>✅ 用户状态正常</b>\n\n👤 账号：<code>${account}</code>`;
 	}
 
 	if (匹配命令('bcunban')) {
 		if (!arg) return '❌ 请输入要解封的用户名，例如：\n<code>/bcunban someone@gmail.com</code>';
 		if (!运行时 || !运行时.env) return '系统暂不可用';
-		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 500);
+		const all = await 安全列出KV记录(运行时.env, 'sys:user:', 5000);
 		const keyword = arg.trim().toLowerCase();
 		const user = all.find(u => {
 			if (u.uuid && u.uuid.toLowerCase() === keyword) return true;
@@ -3925,14 +3980,25 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId) {
 			return acct && acct.toLowerCase() === keyword;
 		});
 		if (!user) return '❌ 未找到该用户。请使用注册时使用的用户名/邮箱。';
-		if (user.subscriptionState !== 'banned') return '⚠️ 该用户当前未被封禁';
 		const nowMs = Date.now();
-		const restored = await 安全设置用户订阅状态(运行时, user.uuid, true, {
-			reason: 'tg-bot-unban', source: 'telegram-bot', ip: 'tg-webhook'
-		}, nowMs);
-		if (!restored) return '❌ 解封操作失败，请稍后重试';
-		const account = 提取账号(restored);
-		return `<b>✅ 解封成功</b>\n\n👤 账号：<code>${account}</code>\n⏰ 时间：${new Date(nowMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}`;
+		// 永久封禁：执行正常解封流程
+		if (user.subscriptionState === 'banned') {
+			const restored = await 安全设置用户订阅状态(运行时, user.uuid, true, {
+				reason: 'tg-bot-unban', source: 'telegram-bot', ip: 'tg-webhook'
+			}, nowMs);
+			if (!restored) return '❌ 解封操作失败，请稍后重试';
+			const account = 提取账号(restored);
+			return `<b>✅ 解封成功</b>\n\n👤 账号：<code>${account}</code>\n⏰ 时间：${new Date(nowMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}`;
+		}
+		// 检查临时封禁
+		const activeBan = await 安全获取活跃封禁(运行时, 'uuid', user.uuid, nowMs);
+		if (activeBan) {
+			const released = await 安全手动解封(运行时, 'uuid', user.uuid, nowMs, 'tg-bot-manual-unban');
+			if (!released) return '❌ 解除临时封禁失败，请稍后重试';
+			const account = 提取账号(user);
+			return `<b>✅ 临时封禁已解除</b>\n\n👤 账号：<code>${account}</code>\n⏰ 时间：${new Date(nowMs).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}`;
+		}
+		return '⚠️ 该用户当前未被封禁';
 	}
 
 	return /^\//.test(cmd) ? '<b>❓ 未知命令</b>\n\n输入 <b>/bchelp</b> 查看可用命令列表。' : '';
