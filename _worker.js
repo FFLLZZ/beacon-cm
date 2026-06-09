@@ -8717,8 +8717,53 @@ const AuthForm = {
       }
       throw new Error(rawText || '认证接口返回了无法解析的数据');
     }
-    if (!resp.ok) throw new Error(data.message || '认证请求失败');
+    if (!resp.ok && resp.status !== 202) throw new Error(data.message || '认证请求失败');
     return data;
+  },
+  showTGVerify(data) {
+    this.form.style.display = 'none';
+    this.resultEl.classList.add('show');
+    const uuidEl = document.getElementById('result-uuid');
+    uuidEl.textContent = data.code || '';
+    uuidEl.style.cssText = 'font-size:32px;font-weight:800;letter-spacing:6px;font-family:monospace;color:#a78bfa;user-select:all';
+    const versionLink = document.getElementById('result-version');
+    const botUser = data.botUsername || 'unknown_bot';
+    versionLink.textContent = '打开 Telegram @' + botUser;
+    versionLink.href = 'https://t.me/' + botUser + '?start=' + (data.code || '');
+    versionLink.style.cssText = 'color:#3b82f6;font-weight:600';
+    const subLink = document.getElementById('result-sub');
+    subLink.textContent = '等待验证中... 向 Bot 发送 /start ' + (data.code || '');
+    subLink.href = '#';
+    subLink.style.cssText = 'color:#94a3b8;pointer-events:none';
+    const account = data.account || '';
+    const code = data.code || '';
+    let pollAttempts = 0;
+    const pollTimer = setInterval(async () => {
+      pollAttempts++;
+      if (pollAttempts > 200) { clearInterval(pollTimer); subLink.textContent = '验证超时，请刷新页面重试。'; return; }
+      try {
+        const checkResp = await fetch('/register/verify-tg/check', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account, code }),
+        });
+        const checkData = await checkResp.json();
+        if (checkData.code === 'AUTH_SIGNUP_SUCCESS') {
+          clearInterval(pollTimer);
+          this.switchMode('signin', { prefill: { account, email: '' }, success: 'TG验证通过，注册成功！请登录。' });
+          this.resultEl.classList.remove('show');
+          this.form.style.display = '';
+        } else if (checkData.code === 'AUTH_TG_CODE_EXPIRED') {
+          clearInterval(pollTimer);
+          subLink.textContent = '验证码已过期，请刷新页面重新注册。';
+        } else if (checkData.code === 'AUTH_TG_DUPLICATE') {
+          clearInterval(pollTimer);
+          subLink.textContent = '该TG账号已被绑定。';
+        } else {
+          const rem = checkData.data?.remainingSeconds || 0;
+          subLink.textContent = '等待验证中... ' + (rem > 0 ? Math.floor(rem/60) + '分' + (rem%60) + '秒' : '') + ' (' + pollAttempts + ')';
+        }
+      } catch(e) { console.warn('[TG poll]', e.message); }
+    }, 3000);
   },
   render() {
     this.tabs.forEach((tab) => tab.setAttribute('aria-selected', tab.dataset.mode === this.state.mode ? 'true' : 'false'));
@@ -8770,7 +8815,9 @@ const AuthForm = {
         body: JSON.stringify(this.state.fields),
       });
       const data = await this.parseJsonResponse(resp);
-      if (this.state.mode === 'signup') {
+      if (data.code === 'AUTH_TG_VERIFY_REQUIRED') {
+        this.showTGVerify(data.data || {});
+      } else if (this.state.mode === 'signup') {
         this.switchMode('signin', {
           prefill: this.state.fields,
           success: data.message || '注册成功，请直接登录。',
