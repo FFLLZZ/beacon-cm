@@ -386,7 +386,8 @@ async function 确保D1用户表() {
 		}
 		await DB实例.prepare(`CREATE INDEX IF NOT EXISTS idx_users_userKey ON users(userKey)`).run();
 		await DB实例.prepare(`CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)`).run();
-			try { await DB实例.prepare('CREATE INDEX IF NOT EXISTS idx_users_label ON users(label)').run(); } catch(e) {}
+			try { await DB实例.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_label_unique ON users(label)').run(); } catch(e) {}
+			try { await DB实例.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email)').run(); } catch(e) {}
 	} catch(e) { console.error('D1 建表失败:', e.message); }
 }
 function 用户记录转D1行(user) {
@@ -571,6 +572,38 @@ async function 安全根据账号获取用户(运行时, account) {
 	return null;
 }
 
+// ── 按邮箱查找用户 ──
+async function 安全根据邮箱获取用户(运行时, email) {
+	if (!运行时 || !email) return null;
+	const 搜索邮箱 = String(email).trim().toLowerCase();
+	if (!搜索邮箱 || !/@/.test(搜索邮箱)) return null;
+	if (DB实例) {
+		try {
+			const row = await DB实例.prepare('SELECT uuid FROM users WHERE email=? LIMIT 1').bind(email).first();
+			if (!row) {
+				const row2 = await DB实例.prepare('SELECT uuid FROM users WHERE email=? LIMIT 1').bind(搜索邮箱).first();
+				if (row2 && 安全UUID有效(row2.uuid)) return await 安全获取用户(运行时, row2.uuid);
+			} else if (安全UUID有效(row.uuid)) return await 安全获取用户(运行时, row.uuid);
+		} catch(e) {}
+		try {
+			const row = await DB实例.prepare("SELECT uuid FROM users WHERE attributes LIKE ? LIMIT 1").bind('%' + 搜索邮箱 + '%').first();
+			if (row && 安全UUID有效(row.uuid)) return await 安全获取用户(运行时, row.uuid);
+		} catch(e) {}
+		try {
+			const row = await DB实例.prepare("SELECT uuid FROM users WHERE userKey LIKE ? LIMIT 1").bind('%:' + 搜索邮箱 + '%').first();
+			if (row && 安全UUID有效(row.uuid)) return await 安全获取用户(运行时, row.uuid);
+		} catch(e) {}
+	}
+	const allUsers = await 安全列出KV记录(运行时.env, 安全用户前缀, 500);
+	for (const u of allUsers) {
+		if (!u) continue;
+		const emails = [u.email, (u.attributes && u.attributes.email), (u.attributes && u.attributes.username)]
+			.filter(Boolean).map(e => String(e).toLowerCase());
+		if (emails.includes(搜索邮箱)) return u;
+	}
+	return null;
+}
+
 // ── 速率限制（登录失败）──
 async function 安全检查登录速率限制(运行时, ip) {
 	if (!运行时?.env?.KV || !ip) return { blocked: false };
@@ -649,9 +682,11 @@ function AuthForm校验字段V2(mode, fields) {
 	}
 	if (normalizedMode === 'signup') {
 		if (!password) errors.password = '密码不能为空';
-		else if (password.length < 8) errors.password = '密码至少需要8个字符';
-		else if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password))
-			errors.password = '密码需包含字母和数字';
+		else if (password.length < 8) errors.password = '密码长度不足，至少需要8位';
+		else if (!/[a-z]/.test(password)) errors.password = '密码需包含小写字母';
+		else if (!/[A-Z]/.test(password)) errors.password = '密码需包含大写字母';
+		else if (!/[0-9]/.test(password)) errors.password = '密码需包含数字';
+		else if (!/[^a-zA-Z0-9]/.test(password)) errors.password = '密码需包含特殊符号（如 @#$%^&*）';
 	} else {
 		if (!password && !email) errors.password = '请输入密码或邮箱';
 		if (password && password.length < 8) errors.password = '密码至少需要8个字符';
@@ -807,29 +842,24 @@ export default {
 					await 安全记录注册日志(运行时, 'validation_failed', null, 访问IP, UA, { errors: 校验结果.errors }, 安全当前时间(env));
 					return 认证JSON响应('AUTH_VALIDATION_ERROR', '请填写合法的用户名、邮箱和密码。', { errors: 校验结果.errors }, 400);
 				}
-				if (!校验结果.password || 校验结果.password.length < 8 || !/[a-zA-Z]/.test(校验结果.password) || !/[0-9]/.test(校验结果.password)) {
-					return 认证JSON响应('AUTH_PASSWORD_TOO_WEAK', '密码需要至少8位，包含字母和数字。', null, 400);
-				}
-				const 已有用户 = await 安全根据账号获取用户(运行时, 校验结果.account);
-				if (已有用户) {
-					if (!已有用户.passwordSet) {
-						已有用户.passwordHash = await 安全哈希密码(校验结果.password);
-						已有用户.passwordSet = 1;
-						已有用户.passwordUpdatedAt = 安全当前时间(env);
-						已有用户.updatedAt = 安全当前时间(env);
-						if (校验结果.email) 已有用户.email = 校验结果.email;
-						await 安全保存用户记录V2(运行时, 已有用户);
-						await 安全记录注册日志(运行时, 'password_set', 已有用户.uuid, 访问IP, UA, { account: 校验结果.account }, 安全当前时间(env));
-						return 认证JSON响应('AUTH_PASSWORD_SET', '密码设置成功！请使用用户名和密码登录。', {
-							account: 校验结果.account,
-							nextMode: 'signin',
-						}, 200);
-					}
-					await 安全记录注册日志(运行时, 'duplicate', 已有用户.uuid, 访问IP, UA, { account: 校验结果.account }, 安全当前时间(env));
-					return 认证JSON响应('AUTH_SIGNUP_EXISTS', '该用户已存在，已为你切换到登录模式。', {
+				// 三重唯一性校验：用户名、邮箱
+				const 用户名已存在 = await 安全根据账号获取用户(运行时, 校验结果.account);
+				if (用户名已存在) {
+					await 安全记录注册日志(运行时, 'duplicate_username', 用户名已存在.uuid, 访问IP, UA, { account: 校验结果.account }, 安全当前时间(env));
+					return 认证JSON响应('AUTH_SIGNUP_DUPLICATE_USERNAME', '该用户名已被注册，请更换其他用户名。', {
 						account: 校验结果.account,
-						nextMode: 'signin',
-					}, 200);
+					}, 409);
+				}
+				const 邮箱已存在 = await 安全根据邮箱获取用户(运行时, 校验结果.email);
+				if (邮箱已存在) {
+					await 安全记录注册日志(运行时, 'duplicate_email', 邮箱已存在.uuid, 访问IP, UA, { email: 校验结果.email, account: 校验结果.account }, 安全当前时间(env));
+					return 认证JSON响应('AUTH_SIGNUP_DUPLICATE_EMAIL', '该邮箱已绑定其他账户，请使用其他邮箱或尝试找回密码。', {
+						email: 校验结果.email,
+					}, 409);
+				}
+				// 密码强度校验（前端已做，后端二次确认）
+				if (!校验结果.password || 校验结果.password.length < 8 || !/[a-z]/.test(校验结果.password) || !/[A-Z]/.test(校验结果.password) || !/[0-9]/.test(校验结果.password) || !/[^a-zA-Z0-9]/.test(校验结果.password)) {
+					return 认证JSON响应('AUTH_PASSWORD_TOO_WEAK', '密码强度不足，需包含大小写字母、数字和特殊符号且长度不少于8位。', null, 400);
 				}
 				const hash = await 安全哈希密码(校验结果.password);
 				let labelValue = 校验结果.account;
@@ -859,6 +889,11 @@ export default {
 				const 错误消息 = String(error?.message || '服务器内部异常');
 				if (/KV put\(\) limit exceeded for the day/i.test(错误消息)) {
 					return 认证JSON响应('KV_WRITE_LIMIT_EXCEEDED', '今日注册写入额度已用尽，请稍后再试或明日重试。', null, 503);
+				}
+				if (/UNIQUE constraint failed/i.test(错误消息)) {
+					if (/users\.label/i.test(错误消息)) return 认证JSON响应('AUTH_SIGNUP_DUPLICATE_USERNAME', '该用户名已被注册（并发冲突），请更换其他用户名。', null, 409);
+					if (/users\.email/i.test(错误消息)) return 认证JSON响应('AUTH_SIGNUP_DUPLICATE_EMAIL', '该邮箱已绑定其他账户（并发冲突），请使用其他邮箱。', null, 409);
+					return 认证JSON响应('AUTH_SIGNUP_DUPLICATE', '注册信息重复，请检查后重试。', null, 409);
 				}
 				return 认证JSON响应('AUTH_SIGNUP_FAILED', `注册失败：${错误消息}`, null, 500);
 			}
