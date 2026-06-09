@@ -781,6 +781,17 @@ export default {
 					}
 					replyToken = TG.BotToken;
 					const configuredChatId = String(TG.ChatID || '');
+					// 提取验证码参数（/start <code>）
+					const 验证码匹配 = msg.text.match(/^\/start\s+([A-Za-z0-9]{4,8})\b/);
+					if (验证码匹配) {
+						// TG验证命令：接受来自任何chat的消息
+						const 运行时 = await 创建安全运行时(env);
+						const tgFrom = msg.from || null;
+						const replyText = await 安全处理TG命令(env, 运行时, msg.text, String(chatId), tgFrom);
+						if (replyText) await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, parse_mode: 'HTML', text: replyText }).toString());
+						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+					}
+					// 非验证命令必须来自已配置的群组
 					if (configuredChatId && configuredChatId !== String(chatId)) {
 						await fetch('https://api.telegram.org/bot' + TG.BotToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, text: '未授权群组 ChatID: ' + chatId + ' 已配置: ' + configuredChatId }).toString());
 						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -917,7 +928,11 @@ export default {
 						await 安全KV写入JSON(运行时.env, verifyKey, existingVerify, Math.ceil((existingVerify.expiresAt - Date.now()) / 1000));
 					}
 					await 安全记录注册日志(运行时, 'tg_verify_pending', null, 访问IP, UA, { account: 校验结果.account, code: 安全掩码UUID(verifyResult.code) }, 安全当前时间(env));
-					const botUsername = TG2.BotUsername || TG2.BotToken?.split(':')[0] || 'unknown_bot';
+					let botUsername = TG2.BotUsername || null;
+					if (!botUsername) {
+						try { const meR = await fetch('https://api.telegram.org/bot' + TG2.BotToken + '/getMe'); const meD = await meR.json(); if (meD.ok && meD.result?.username) botUsername = meD.result.username; } catch(e) {}
+					}
+					if (!botUsername) botUsername = 'unknown_bot';
 					return 认证JSON响应('AUTH_TG_VERIFY_REQUIRED', '请通过Telegram验证以完成注册。', {
 						code: verifyResult.code,
 						expiresAt: verifyResult.expiresAt,
@@ -1032,8 +1047,12 @@ export default {
 					await 安全KV写入JSON(运行时.env, verifyKey, existingVerify, Math.ceil((existingVerify.expiresAt - Date.now()) / 1000));
 				}
 				await 安全记录注册日志(运行时, 'tg_verify_pending', null, 访问IP, UA, { account: 校验结果.account, code: 安全掩码UUID(verifyResult.code) }, 安全当前时间(env));
-				// 获取Bot用户名用于前端展示
-				const botUsername = TG.BotUsername || TG.BotToken?.split(':')[0] || 'unknown_bot';
+				// 获取Bot用户名用于前端展示（优先tg.json配置，否则调用getMe API）
+				let botUsername = TG.BotUsername || null;
+				if (!botUsername) {
+					try { const meR = await fetch('https://api.telegram.org/bot' + TG.BotToken + '/getMe'); const meD = await meR.json(); if (meD.ok && meD.result?.username) botUsername = meD.result.username; } catch(e) {}
+				}
+				if (!botUsername) botUsername = 'unknown_bot';
 				const verifyGroupId = TG.VerifyGroupID || TG.ChatID;
 				// 尝试获取群组邀请链接
 				let groupInviteLink = TG.GroupInviteLink || '';
