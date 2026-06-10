@@ -6793,7 +6793,7 @@ async function 安全记录订阅请求(运行时, config, user, meta = {}, nowM
 			});
 			await 安全封禁用户账号(运行时, user.uuid, {
 				ip: meta.ip || null,
-				source: 'subscription-guard',
+				source: '订阅风控自动封禁',
 				trigger: 'ip-spread-hourly',
 				reason: 'subscription-ip-spread-threshold',
 			}, nowMs);
@@ -6827,7 +6827,7 @@ async function 安全记录订阅无效令牌(运行时, config, user, meta = {}
 	if (saved.hourlyInvalidTokenCount >= invalidLimit) {
 		await 安全封禁用户账号(运行时, user.uuid, {
 			ip: meta.ip || null,
-			source: 'subscription-guard',
+			source: '订阅风控自动封禁',
 			trigger: 'invalid-token-spike',
 			reason: 'subscription-invalid-token-threshold',
 		}, nowMs);
@@ -6858,7 +6858,7 @@ async function 安全记录订阅超限(运行时, user, state, meta = {}, nowMs
 	});
 	return await 安全封禁用户账号(运行时, user.uuid, {
 		ip: meta.ip || null,
-		source: 'subscription-guard',
+		source: '订阅风控自动封禁',
 		trigger: meta.target || 'subscription-hourly-limit',
 		reason: 'subscription-hourly-limit',
 	}, nowMs);
@@ -7219,7 +7219,7 @@ async function 安全删除用户账号(运行时, uuid, meta = {}, nowMs = Date
 		payload: {
 			label: user.label || null,
 			userKey: userKey || null,
-			source: meta.source || 'admin-panel',
+			source: meta.source || '后台管理面板',
 			reason: meta.reason || 'admin-deleted',
 		},
 		createdAt: nowMs,
@@ -7254,19 +7254,19 @@ async function 安全设置用户订阅状态(运行时, uuid, enabled, meta = {
 		payload: {
 			reason: enabled ? (meta.reason || 'admin-restored') : stateReason,
 			reasonLabel: 安全格式化封禁原因(enabled ? (meta.reason || 'admin-restored') : stateReason),
-			source: meta.source || 'admin-panel',
+			source: meta.source || '后台管理面板',
 			subscriptionState: saved.subscriptionState,
 		},
 		createdAt: nowMs,
 	});
-	const account = (saved.attributes && (saved.attributes.account || saved.attributes.email)) || saved.label || saved.email || '-';
+	const account = (saved.attributes && (saved.attributes.account || saved.attributes.email || saved.attributes.username)) || saved.label || saved.email || (saved.uuid || '').slice(0, 8) || '-';
 	const eventType = enabled ? 'user.restored' : 'user.banned';
 	const title = enabled ? `#管理员解封 ${account}` : `#管理员封禁 ${account}`;
 	安全发送TG通知(运行时.env, eventType, title, [
 		['账号', account],
 		['UUID', 安全掩码UUID(saved.uuid)],
 		['原因', 安全格式化封禁原因(enabled ? (meta.reason || 'admin-restored') : stateReason)],
-		['来源', meta.source || 'admin-panel'],
+		['来源', meta.source || '后台管理面板'],
 	]);
 	return saved;
 }
@@ -7286,19 +7286,19 @@ async function 安全封禁用户账号(运行时, uuid, meta = {}, nowMs = Date
 		payload: {
 			reason: meta.reason || 'subscription-threshold-exceeded',
 			reasonLabel: 安全格式化封禁原因(meta.reason || 'subscription-threshold-exceeded'),
-			source: meta.source || 'subscription-guard',
+			source: meta.source || '订阅风控自动封禁',
 			trigger: meta.trigger || null,
 			subscriptionState: saved.subscriptionState,
 		},
 		createdAt: nowMs,
 	});
-	const account = (saved.attributes && (saved.attributes.account || saved.attributes.email)) || saved.label || saved.email || '-';
+	const account = (saved.attributes && (saved.attributes.account || saved.attributes.email || saved.attributes.username)) || saved.label || saved.email || (saved.uuid || '').slice(0, 8) || '-';
 	安全发送TG通知(运行时.env, 'user.banned', `#自动封禁 ${account}`, [
 		['账号', account],
 		['UUID', 安全掩码UUID(saved.uuid)],
 		['原因', 安全格式化封禁原因(meta.reason || 'subscription-threshold-exceeded')],
 		['触发', meta.trigger || '-'],
-		['来源', meta.source || 'subscription-guard'],
+		['来源', meta.source || '订阅风控自动封禁'],
 	]);
 	return saved;
 }
@@ -7316,7 +7316,7 @@ async function 安全重置用户订阅令牌(运行时, uuid, meta = {}, nowMs 
 		ip: meta.ip || null,
 		payload: {
 			reason: meta.reason || 'admin',
-			source: meta.source || 'admin-panel',
+			source: meta.source || '后台管理面板',
 			tokenMode: 'managed',
 		},
 		createdAt: nowMs,
@@ -7360,7 +7360,7 @@ async function 安全设置用户总限额(运行时, uuid, options = {}, meta =
 			resetUsedTraffic,
 			usedTraffic: saved.used_traffic || 0,
 			reason: meta.reason || 'admin-traffic-updated',
-			source: meta.source || 'admin-panel',
+			source: meta.source || '后台管理面板',
 		},
 		createdAt: nowMs,
 	});
@@ -8664,7 +8664,7 @@ async function 安全批量执行用户管理动作(运行时, url, action, uuid
 		payload: {
 			action,
 			reason: meta.reason || 'admin-batch',
-			source: meta.source || 'admin-panel',
+			source: meta.source || '后台管理面板',
 			affectedUuids: results.map(item => item.uuid),
 			requestedCount: normalizedUuids.length,
 			successCount: results.length,
