@@ -6373,7 +6373,7 @@ async function 安全处理聊天成员更新(env, body) {
 
 		if (saved) {
 			await 安全记录TG绑定日志(运行时, 'tg.member.left.banned', bindRecord.uuid, tgUserId, tgUsername, { newStatus, banReason });
-			const account = (saved.attributes && saved.attributes.account) || saved.label || saved.email || bindRecord.account || '-';
+			const account = (saved.attributes && (saved.attributes.account || saved.attributes.username)) || saved.label || saved.email || bindRecord.account || (saved.uuid || '').slice(0, 8) || '未绑定';
 			const actionLabel = newStatus === 'kicked' ? '被踢出群组' : '退群';
 			安全发送TG通知(运行时.env, 'user.banned', `#${actionLabel}自动封禁 ${account}`, [
 				['账号', account],
