@@ -8524,20 +8524,29 @@ function 安全提取用户展示信息(user = {}) {
 
 function 安全提取用户展示信息智能(user = {}) {
 	const base = 安全提取用户展示信息(user);
-	// 智能解耦：当 account 为邮箱格式但 email 为空时，将邮箱值从 account 迁移到 email
-	if (base.account && /@/.test(base.account) && !base.email) {
-		base.email = base.account;
+	// 智能恢复：当 account 为空或为邮箱格式时，尝试从 userKey 恢复真实用户名
+	if (!base.account || (/@/.test(base.account) && !base.email)) {
+		if (/@/.test(base.account) && !base.email) {
+			base.email = base.account;
+		}
 		// 尝试从 userKey 恢复真实用户名
 		if (typeof user.userKey === 'string' && user.userKey.startsWith('register:')) {
 			const parts = user.userKey.split(':');
 			if (parts.length >= 4 && parts[2] && !/@/.test(parts[2])) {
 				base.account = parts[2];
-			} else {
+			} else if (!base.account) {
 				base.account = (user.uuid || '').slice(0, 8);
 			}
-		} else {
+			if (!base.email && parts.length >= 4) {
+				base.email = parts.slice(3).join(':') || null;
+			}
+		} else if (!base.account) {
 			base.account = (user.uuid || '').slice(0, 8);
 		}
+	}
+	// 最终兜底：如果 account 仍为空，用 uuid 前8位
+	if (!base.account && user.uuid) {
+		base.account = (user.uuid || '').slice(0, 8);
 	}
 	return base;
 }
@@ -10614,8 +10623,8 @@ function 生成安全管理后台注入代码() {
       '<div class="admin-plus-panel"><div class="admin-plus-panel-header-wrap"><div><h3>用户列表</h3><div class="admin-plus-desc">支持按用户名、邮箱、UUID、IP 搜索，并执行批量封禁、解封、设置总限额、重置订阅和删除用户。</div></div><div class="admin-plus-toolbar"><input id="admin-plus-user-search" class="admin-plus-inline-input" placeholder="搜索 用户名 / 邮箱 / UUID / IP" value="' + escapeHtml(state.userSearch || '') + '" /><select id="admin-plus-user-status-filter" class="admin-plus-inline-input" style="min-width:160px"><option value="all"' + (state.userStatusFilter === 'all' ? ' selected' : '') + '>全部状态</option><option value="active"' + (state.userStatusFilter === 'active' ? ' selected' : '') + '>正常</option><option value="banned"' + (state.userStatusFilter === 'banned' ? ' selected' : '') + '>已封禁</option></select><button class="admin-plus-btn secondary" type="button" id="admin-plus-select-filtered">全选当前筛选</button><button class="admin-plus-btn secondary" type="button" id="admin-plus-clear-selection">清空选择</button><a class="admin-plus-btn secondary" href="/register" target="_blank" rel="noreferrer">打开用户面板</a></div></div><div class="admin-plus-empty" style="padding:16px 20px;align-items:flex-start;text-align:left">已选择 ' + escapeHtml(selectedCount) + ' 个用户，可直接执行批量动作。<div class="admin-plus-actions"><button class="admin-plus-btn warn" type="button" data-batch-action="ban">批量封禁</button><button class="admin-plus-btn" type="button" data-batch-action="restore">批量解封</button><button class="admin-plus-btn secondary" type="button" data-batch-action="reset-subscription">批量重置订阅</button><button class="admin-plus-btn warn" type="button" data-batch-action="delete">批量删除</button></div></div>',
       renderTable(['选择', '用户名', '邮箱', 'UUID', 'TG账号', '状态', '总限额', '最近活跃', '操作'], filteredUsers.map(item => [
         '<input type="checkbox" data-user-toggle="' + escapeHtml(item.uuid) + '"' + (selectedSet.has(item.uuid) ? ' checked' : '') + ' />',
-        escapeHtml(item.profile && item.profile.account || item.label || '-'),
-        escapeHtml(item.profile && item.profile.email || '-'),
+        escapeHtml(item.profile && item.profile.account || item.profile && item.profile.email || item.label || '-'),
+        escapeHtml(item.profile && item.profile.email || item.email || '-'),
         '<code>' + escapeHtml(item.uuid || '-') + '</code>',
 		'<span class="admin-plus-badge muted">' + escapeHtml(item.profile && item.profile.tgUsername || '未绑定') + '</span>',
         '<span class="admin-plus-badge' + getUserStatusMeta(item).className + '">' + escapeHtml(getUserStatusMeta(item).label) + '</span>',
