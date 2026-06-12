@@ -8738,7 +8738,9 @@ body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",
 .feature-dot{width:6px;height:6px;border-radius:50%;background:#3b82f6;flex-shrink:0}
 .panel{background:#0f172a;border:1px solid #1e293b;border-radius:20px;box-shadow:0 10px 30px rgba(2,8,23,.35)}
 .auth-panel,.result{padding:28px}
-.auth-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.auth-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
+.auth-head > div:first-child{flex:1;min-width:0}
+.auth-head .tabs{flex-shrink:0;margin-left:auto}
 .auth-title{font-size:22px;font-weight:700}
 .auth-desc{color:#94a3b8;font-size:14px;line-height:1.6;margin-top:4px}
 .tabs{display:inline-flex;gap:8px;padding:6px;background:#0b1220;border:1px solid #1e293b;border-radius:14px}
@@ -8785,7 +8787,7 @@ button[disabled]{opacity:.6;cursor:not-allowed}
 .result-item{padding:14px 16px;background:#111c31;border:1px solid rgba(148,163,184,.14);border-radius:14px}
 .result-item strong{display:block;font-size:12px;color:#93c5fd;margin-bottom:8px}
 .result-item code,.result-item a{word-break:break-all;color:#f8fafc}
-@media (max-width:520px){body{padding:16px 12px}.wrap{padding:0}.hero{padding:20px 16px}.hero-slogan{font-size:22px}.auth-head{flex-direction:column}.auth-title{font-size:20px}}
+@media (max-width:520px){body{padding:16px 12px}.wrap{padding:0}.hero{padding:20px 16px}.hero-slogan{font-size:22px}.auth-title{font-size:20px}}
 .footer{text-align:center;margin-top:24px;padding:16px 0;color:#475569;font-size:12px;line-height:1.6}
 .footer a{color:#64748b;text-decoration:none}
 .footer a:hover{color:#94a3b8}
