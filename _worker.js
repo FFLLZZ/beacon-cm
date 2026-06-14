@@ -4388,10 +4388,11 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 			(bindRecord?.uuid ? '' : '💡 请先通过注册页面获取验证码，在群内发送 <code>/bnbind 验证码</code> 完成绑定。');
 	}
 
-	if (匹配命令('bnhelp') || cmd === '/start') {
+	if (匹配命令('bnhelp') || 匹配命令('bchelp') || cmd === '/start') {
 		return '<b>🔐 Beacon 灯塔 Bot 命令</b>\n\n' +
 			'<b>/bnhelp</b> — 显示此帮助\n' +
 			'<b>/bnbind</b> <code>&lt;验证码&gt;</code> — 绑定TG账号\n' +
+			'<b>/bnwhoami</b> — 查看我的TG信息\n' +
 			'<b>/bncheckin</b> — 每日签到\n' +
 			'<b>/bntraffic</b> — 查询剩余流量\n' +
 			'<b>/bnstatus</b> — 查询账户状态\n\n' +
