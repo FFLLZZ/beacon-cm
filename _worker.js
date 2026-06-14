@@ -1366,6 +1366,7 @@ if (访问路径 === 'register/login' || 访问路径 === 'register/login/') {
 				user.passwordUpdatedAt = 安全当前时间(env);
 				user.updatedAt = 安全当前时间(env);
 				await 安全保存用户记录V2(运行时, user);
+				失效用户缓存(user.uuid);
 				return 认证JSON响应('AUTH_PASSWORD_SET', '密码设置成功！请使用新密码登录。', {
 					account: user.label || '',
 				}, 200);
