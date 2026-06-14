@@ -4384,6 +4384,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 			'<b>/bcbanned</b> — 列出所有被封禁用户\n' +
 			'<b>/bcbaninfo</b> <code>&lt;用户名&gt;</code> — 查封禁详情\n' +
 			'<b>/bcunban</b> <code>&lt;用户名&gt;</code> — 解封用户\n' +
+			'<b>/bcunbind</b> <code>&lt;TGID&gt;</code> — 手动解绑TG\n' +
 			'<b>/bcsync</b> — 同步群成员并封禁退群用户\n\n' +
 			'提示：群内有多个机器人时，用 <code>@机器人用户名</code> 指定目标。';
 	}
@@ -4456,6 +4457,25 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 			'<b>TG绑定：</b>' + (bindRecord.tgUsername || '已绑定') + '\n' +
 			'<b>流量：</b>' + fmt(usedBytes) + ' / ' + fmt(totalBytes) + '\n' +
 			'<b>签到：</b>' + (checkedInToday ? '✅ 今日已签到' : '⬜ 今日未签到') + ' | 连续' + (tgRecord.checkInStreak || 0) + '天 | 累计' + (tgRecord.totalCheckIns || 0) + '次';
+	}
+
+	// ── 手动解绑TG（管理员）──
+	if (匹配命令('bcunbind')) {
+		if (!tgFrom?.id) return '⚠️ 无法识别用户身份。';
+		const tgId = arg.replace(/[^0-9]/g, '');
+		if (!tgId) return '⚠️ 请提供要解绑的TG用户ID。\n用法：<code>/bcunbind 408496390</code>';
+		const bindRecord = await 安全KV读取JSON(运行时.env, 安全TG绑定键(tgId), null);
+		if (!bindRecord) {
+			// 也尝试数字key
+			const bindRecord2 = await 安全KV读取JSON(运行时.env, 安全TG绑定键(Number(tgId)), null);
+			if (!bindRecord2) return '⚠️ 未找到 TG ID <code>' + tgId + '</code> 的绑定记录。';
+		}
+		const record = bindRecord || (await 安全KV读取JSON(运行时.env, 安全TG绑定键(Number(tgId)), null));
+		await 安全KV删除键(运行时.env, 安全TG绑定键(String(tgId)));
+		await 安全KV删除键(运行时.env, 安全TG绑定键(Number(tgId)));
+		if (record?.uuid) await 安全KV删除键(运行时.env, 安全TG用户键(record.uuid));
+		await 安全记录TG绑定日志(运行时, 'tg.bind.unlinked', record?.uuid || null, Number(tgId), record?.tgUsername || null, { reason: 'admin-manual-unlink' });
+		return '✅ 已解绑 TG ID <code>' + tgId + '</code>' + (record?.tgUsername ? '（' + record.tgUsername + '）' : '') + ' 的绑定记录。';
 	}
 
 	if (匹配命令('bcbanned')) {
