@@ -388,6 +388,8 @@ async function 确保D1用户表() {
 		await DB实例.prepare(`CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)`).run();
 			try { await DB实例.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_label_unique ON users(label)').run(); } catch(e) {}
 			try { await DB实例.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email)').run(); } catch(e) {}
+		// kv_config 通用键值表（用于TG验证等强一致性场景）
+		try { await DB实例.prepare('CREATE TABLE IF NOT EXISTS kv_config (key TEXT PRIMARY KEY, value TEXT)').run(); } catch(e) {}
 	} catch(e) { console.error('D1 建表失败:', e.message); }
 }
 function 用户记录转D1行(user) {
@@ -6453,9 +6455,9 @@ async function 安全校验TG验证码(运行时, code) {
 	// 优先读D1（强一致性，避免KV跨节点60s延迟）
 	if (DB实例) {
 		try {
-			const row = await DB实例.prepare('SELECT value FROM kv_config WHERE key=?').bind('verify:' + code.toUpperCase()).first();
+			const row = await DB实例.prepare('SELECT value FROM kv_config WHERE key=?1').bind('verify:' + code.toUpperCase()).first();
 			if (row?.value) { const r = JSON.parse(row.value); if (Date.now() <= 安全数值(r.expiresAt, 0, 0)) return r; }
-		} catch(e) {}
+		} catch(e) { console.warn('[TG verify] D1 read failed:', e.message); }
 	}
 	// KV 回退
 	const record = await 安全KV读取JSON(运行时.env, key, null);
