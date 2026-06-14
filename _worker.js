@@ -6500,7 +6500,9 @@ async function 安全TG通知被封用户(运行时, uuid, 封禁信息 = {}) {
 }
 
 // ── 发送群消息并5秒后自动删除（封禁/解封通知除外）──
-async function 发送TG消息并自动删除(botToken, chatId, text, ctx, triggerMsgId, parseMode = 'HTML', deleteAfter = 8000) {
+async function 发送TG消息并自动删除(botToken, chatId, text, ctx, triggerMsgId, parseMode = 'HTML', deleteAfter = 0) {
+	// 帮助菜单给更长阅读时间
+	if (!deleteAfter) deleteAfter = text.includes('Beacon 灯塔 Bot 命令') ? 12000 : 8000;
 	const resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage?' + new URLSearchParams({ chat_id: chatId, parse_mode: parseMode, text: text }));
 	const data = await resp.json();
 	if (deleteAfter > 0 && ctx) {
