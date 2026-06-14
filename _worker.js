@@ -1239,7 +1239,7 @@ export default {
 						memberStatus: verifyRecord.memberStatus,
 					}, 安全当前时间(env));
 					// 清理验证记录
-					try { await 运行时.env.KV.delete(安全TG验证键(code)); } catch(e) {}
+					try { await 运行时.env.KV.delete(安全TG验证键(code)); if (DB实例) { try { await DB实例.prepare('DELETE FROM kv_config WHERE key=?').bind('verify:' + code.toUpperCase()).run(); } catch(e) {} }; } catch(e) {}
 					return 认证JSON响应('AUTH_SIGNUP_SUCCESS', 'TG验证通过，注册成功！已切换到登录模式，请直接登录。', {
 						account: pending.account,
 						nextMode: 'signin',
@@ -6450,6 +6450,14 @@ async function 安全生成TG验证码(运行时, verifyTimeout) {
 async function 安全校验TG验证码(运行时, code) {
 	if (!运行时 || !运行时.env || !code) return null;
 	const key = 安全TG验证键(code);
+	// 优先读D1（强一致性，避免KV跨节点60s延迟）
+	if (DB实例) {
+		try {
+			const row = await DB实例.prepare('SELECT value FROM kv_config WHERE key=?').bind('verify:' + code.toUpperCase()).first();
+			if (row?.value) { const r = JSON.parse(row.value); if (Date.now() <= 安全数值(r.expiresAt, 0, 0)) return r; }
+		} catch(e) {}
+	}
+	// KV 回退
 	const record = await 安全KV读取JSON(运行时.env, key, null);
 	if (!record) return null;
 	if (Date.now() > 安全数值(record.expiresAt, 0, 0)) {
@@ -6492,6 +6500,10 @@ async function 安全标记TG验证完成(运行时, code, tgUserId, tgUsername,
 	record.memberStatus = memberStatus;
 	record.verifiedAt = Date.now();
 	await 安全KV写入JSON(运行时.env, key, record, Math.ceil((record.expiresAt - Date.now()) / 1000));
+	// 同步写入D1（强一致性，轮询接口优先读D1）
+	if (DB实例) {
+		try { await DB实例.prepare('INSERT OR REPLACE INTO kv_config (key, value) VALUES (?, ?)').bind('verify:' + code.toUpperCase(), JSON.stringify(record)).run(); } catch(e) {}
+	}
 	return record;
 }
 
