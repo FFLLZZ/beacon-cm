@@ -826,8 +826,9 @@ export default {
 					if (!纯文本.startsWith('/')) {
 						return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 					}
-					// Only admins/owner can use commands in groups
-					if (msg.from && msg.chat.type !== 'private') {
+					// 管理命令需管理员权限，用户命令(bn前缀)所有人可用
+					const isAdminCmd = 纯文本.startsWith('/bc') || 纯文本.startsWith('/unban') || 纯文本.startsWith('/ban');
+					if (isAdminCmd && msg.from && msg.chat.type !== 'private') {
 						try {
 							const memberResp = await fetch('https://api.telegram.org/bot' + TG.BotToken + '/getChatMember?' + new URLSearchParams({ chat_id: chatId, user_id: msg.from.id }));
 							const memberData = await memberResp.json();
