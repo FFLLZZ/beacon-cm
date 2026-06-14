@@ -6450,7 +6450,9 @@ async function 安全生成TG验证码(运行时, verifyTimeout) {
 async function 安全校验TG验证码(运行时, code) {
 	if (!运行时 || !运行时.env || !code) return null;
 	const key = 安全TG验证键(code);
-	const record = await 安全KV读取JSON(运行时.env, key, null);
+	// 绕过缓存直接读KV，避免Cloudflare KV最终一致性导致60s延迟
+	const raw = await 运行时.env.KV.get(key, { cacheTtl: 0 });
+	const record = raw ? JSON.parse(raw) : null;
 	if (!record) return null;
 	if (Date.now() > 安全数值(record.expiresAt, 0, 0)) {
 		return { ...record, status: 'expired' };
