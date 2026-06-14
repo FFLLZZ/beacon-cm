@@ -4374,6 +4374,20 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 		}
 	}
 
+	// ── 查看自己的TG ID ──
+	if (匹配命令('bnwhoami')) {
+		if (!tgFrom?.id) return '⚠️ 无法识别用户身份。';
+		const bindRecord = await 安全KV读取JSON(运行时.env, 安全TG绑定键(tgFrom.id), null)
+			|| await 安全KV读取JSON(运行时.env, 安全TG绑定键(String(tgFrom.id)), null)
+			|| await 安全KV读取JSON(运行时.env, 安全TG绑定键(Number(tgFrom.id)), null);
+		const bound = bindRecord?.uuid ? '已绑定账号' : '未绑定';
+		return '<b>🆔 您的 Telegram 信息</b>\n\n' +
+			'<b>TG ID：</b><code>' + tgFrom.id + '</code>\n' +
+			'<b>TG用户名：</b>' + (tgFrom.username ? '@' + tgFrom.username : '未设置') + '\n' +
+			'<b>绑定状态：</b>' + bound + '\n\n' +
+			(bindRecord?.uuid ? '' : '💡 请先通过注册页面获取验证码，在群内发送 <code>/bnbind 验证码</code> 完成绑定。');
+	}
+
 	if (匹配命令('bnhelp') || cmd === '/start') {
 		return '<b>🔐 Beacon 灯塔 Bot 命令</b>\n\n' +
 			'<b>/bnhelp</b> — 显示此帮助\n' +
