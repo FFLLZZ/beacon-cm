@@ -6418,6 +6418,7 @@ async function 安全标记TG验证完成(运行时, code, tgUserId, tgUsername,
 	const existingBind = await 安全KV读取JSON(运行时.env, 安全TG绑定键(tgUserId), null);
 	if (existingBind && existingBind.uuid) {
 		// 验证绑定的用户是否还存在，若已删除则自动清理脏数据
+		失效用户缓存(existingBind.uuid); // 先清缓存防脏读
 		const boundUser = await 安全获取用户(运行时, existingBind.uuid);
 		if (!boundUser) {
 			await 安全KV删除键(运行时.env, 安全TG绑定键(String(tgUserId)));
@@ -7460,6 +7461,7 @@ async function 安全删除用户账号(运行时, uuid, meta = {}, nowMs = Date
 		await 安全KV删除键(运行时.env, 安全TG绑定键(Number(tgUserId)));
 		await 安全KV删除键(运行时.env, 安全TG用户键(normalizedUuid));
 	}
+	失效用户缓存(normalizedUuid);
 	await 安全记录事件(运行时, {
 		eventType: 'user.deleted',
 		subjectType: 'uuid',
