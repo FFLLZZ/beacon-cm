@@ -860,12 +860,26 @@ export default {
 						info.botConfigured = !!TG.BotToken;
 						info.chatId = TG.ChatID || 'none';
 						if (TG.BotToken) {
-							const [wResp, cResp] = await Promise.all([
+							const commands = [
+								{ command: 'bnhelp', description: '显示帮助菜单' },
+								{ command: 'bnbind', description: '绑定TG账号（验证码）' },
+								{ command: 'bnwhoami', description: '查看我的TG ID和绑定状态' },
+								{ command: 'bncheckin', description: '每日签到（+1GB流量）' },
+								{ command: 'bntraffic', description: '查询剩余流量' },
+								{ command: 'bnstatus', description: '查询账户状态' },
+							];
+							const [wResp, cResp, sResp] = await Promise.all([
 								fetch('https://api.telegram.org/bot' + TG.BotToken + '/getWebhookInfo'),
-								fetch('https://api.telegram.org/bot' + TG.BotToken + '/getMyCommands')
+								fetch('https://api.telegram.org/bot' + TG.BotToken + '/getMyCommands'),
+								fetch('https://api.telegram.org/bot' + TG.BotToken + '/setMyCommands', {
+									method: 'POST',
+									headers: { 'Content-Type': 'application/json' },
+									body: JSON.stringify({ commands, scope: { type: 'all_group_chats' } })
+								})
 							]);
 							info.webhookInfo = await wResp.json();
 							info.myCommands = await cResp.json();
+							info.commandsUpdated = (await sResp.json()).ok;
 						}
 					}
 				} catch(e) { info.error = e.message; }
