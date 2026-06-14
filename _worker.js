@@ -7527,14 +7527,7 @@ async function 安全设置用户订阅状态(运行时, uuid, enabled, meta = {
 	});
 	const account = (saved.attributes && (saved.attributes.account || saved.attributes.email || saved.attributes.username)) || saved.label || saved.email || (saved.uuid || '').slice(0, 8) || '-';
 	const eventType = enabled ? 'user.restored' : 'user.banned';
-	const title = enabled ? `#管理员解封 ${account}` : `#管理员封禁 ${account}`;
-	安全发送TG通知(运行时.env, eventType, title, [
-		['账号', account],
-		['UUID', 安全掩码UUID(saved.uuid)],
-		['原因', 安全格式化封禁原因(enabled ? (meta.reason || 'admin-restored') : stateReason)],
-		['来源', meta.source || '后台管理面板'],
-	]);
-	// TG @通知被封用户
+	// TG @通知被封用户（同时通知管理员）
 	if (!enabled && saved.attributes?.tgUserId) {
 		安全TG通知被封用户(运行时, saved.uuid, {
 			tgUserId: saved.attributes.tgUserId,
@@ -7543,6 +7536,14 @@ async function 安全设置用户订阅状态(运行时, uuid, enabled, meta = {
 			reason: 安全格式化封禁原因(stateReason),
 			operator: meta.source || '后台管理面板'
 		});
+	} else {
+		// 未绑定TG时仍发管理员通知
+		安全发送TG通知(运行时.env, eventType, title, [
+			['账号', account],
+			['UUID', 安全掩码UUID(saved.uuid)],
+			['原因', 安全格式化封禁原因(enabled ? (meta.reason || 'admin-restored') : stateReason)],
+			['来源', meta.source || '后台管理面板'],
+		]);
 	}
 	return saved;
 }
@@ -7569,14 +7570,7 @@ async function 安全封禁用户账号(运行时, uuid, meta = {}, nowMs = Date
 		createdAt: nowMs,
 	});
 	const account = (saved.attributes && (saved.attributes.account || saved.attributes.email || saved.attributes.username)) || saved.label || saved.email || (saved.uuid || '').slice(0, 8) || '-';
-	安全发送TG通知(运行时.env, 'user.banned', `#自动封禁 ${account}`, [
-		['账号', account],
-		['UUID', 安全掩码UUID(saved.uuid)],
-		['原因', 安全格式化封禁原因(meta.reason || 'subscription-threshold-exceeded')],
-		['触发', meta.trigger || '-'],
-		['来源', meta.source || '订阅风控自动封禁'],
-	]);
-	// TG @通知被封用户
+	// TG @通知被封用户（同时通知管理员）
 	if (saved.attributes?.tgUserId) {
 		安全TG通知被封用户(运行时, saved.uuid, {
 			tgUserId: saved.attributes.tgUserId,
@@ -7585,6 +7579,14 @@ async function 安全封禁用户账号(运行时, uuid, meta = {}, nowMs = Date
 			reason: 安全格式化封禁原因(meta.reason || 'subscription-threshold-exceeded'),
 			operator: meta.source || '订阅风控自动封禁'
 		});
+	} else {
+		安全发送TG通知(运行时.env, 'user.banned', `#自动封禁 ${account}`, [
+			['账号', account],
+			['UUID', 安全掩码UUID(saved.uuid)],
+			['原因', 安全格式化封禁原因(meta.reason || 'subscription-threshold-exceeded')],
+			['触发', meta.trigger || '-'],
+			['来源', meta.source || '订阅风控自动封禁'],
+		]);
 	}
 	return saved;
 }
