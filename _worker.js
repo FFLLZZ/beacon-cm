@@ -6394,9 +6394,16 @@ async function 安全标记TG验证完成(运行时, code, tgUserId, tgUsername,
 	// 原子性检查TG ID是否已被其他用户绑定
 	const existingBind = await 安全KV读取JSON(运行时.env, 安全TG绑定键(tgUserId), null);
 	if (existingBind && existingBind.uuid) {
-		record.status = 'duplicate';
-		await 安全KV写入JSON(运行时.env, key, record, Math.ceil((record.expiresAt - Date.now()) / 1000));
-		return { ...record, duplicateUuid: existingBind.uuid };
+		// 验证绑定的用户是否还存在，若已删除则自动清理脏数据
+		const boundUser = await 安全获取用户(运行时, existingBind.uuid);
+		if (!boundUser) {
+			await 安全KV删除键(运行时.env, 安全TG绑定键(tgUserId));
+			await 安全KV删除键(运行时.env, 安全TG用户键(existingBind.uuid));
+		} else {
+			record.status = 'duplicate';
+			await 安全KV写入JSON(运行时.env, key, record, Math.ceil((record.expiresAt - Date.now()) / 1000));
+			return { ...record, duplicateUuid: existingBind.uuid };
+		}
 	}
 	record.status = 'verified';
 	record.tgUserId = tgUserId;
