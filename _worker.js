@@ -4618,7 +4618,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 		return await 安全同步TG群成员(运行时, env);
 	}
 
-	return /^\//.test(cmd) ? '<b>❓ 未知命令</b>\n\n输入 <b>/bchelp</b> 查看可用命令列表。' : '';
+	return /^\//.test(cmd) ? '<b>❓ 未知命令</b>\n\n输入 <b>/bnhelp</b> 查看可用命令列表。' : '';
 }
 
 function 掩码敏感信息(文本, 前缀长度 = 3, 后缀长度 = 2) {
