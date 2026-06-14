@@ -4312,8 +4312,8 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 
 	const 掩码UUID = (uuid) => 安全掩码UUID(uuid);
 
-	// /start <code> — TG验证码验证入口
-	if (cmd === '/start' && arg && arg.length >= 4 && arg.length <= 8 && tgFrom && tgFrom.id) {
+	// /bnbind <code> — TG验证码验证入口（不用/start避免唤醒其他机器人）
+	if ((匹配命令('bnbind') || (cmd === '/start' && arg)) && arg && arg.length >= 4 && arg.length <= 8 && tgFrom && tgFrom.id) {
 		try {
 			const tgUserId = tgFrom.id;
 			const tgUsername = tgFrom.username ? '@' + tgFrom.username : null;
@@ -4376,6 +4376,7 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 	if (匹配命令('bnhelp') || cmd === '/start') {
 		return '<b>🔐 Beacon 灯塔 Bot 命令</b>\n\n' +
 			'<b>/bnhelp</b> — 显示此帮助\n' +
+			'<b>/bnbind</b> <code>&lt;验证码&gt;</code> — 绑定TG账号\n' +
 			'<b>/bncheckin</b> — 每日签到\n' +
 			'<b>/bntraffic</b> — 查询剩余流量\n' +
 			'<b>/bnstatus</b> — 查询账户状态\n\n' +
