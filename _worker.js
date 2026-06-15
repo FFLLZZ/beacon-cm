@@ -7572,6 +7572,8 @@ async function 安全删除用户账号(运行时, uuid, meta = {}, nowMs = Date
 	await 安全KV删除键(运行时.env, 安全用户木马索引键(sha224(normalizedUuid)));
 	await 安全KV删除键(运行时.env, 安全订阅状态键(normalizedUuid));
 	await 安全KV删除键(运行时.env, 安全活跃封禁键('uuid', normalizedUuid));
+	// 清理D1用户记录（防止安全KV读取JSON的D1回退导致已删用户仍可登录）
+	if (DB实例) { try { await DB实例.prepare('DELETE FROM users WHERE uuid=?').bind(normalizedUuid).run(); } catch(e) { console.error('[删用户] D1删除失败:', e.message); } }
 	// 清理TG绑定记录，防止重新注册时误判已绑定
 	const tgUserId = user?.attributes?.tgUserId || user?.tgUserId;
 	if (tgUserId) {
