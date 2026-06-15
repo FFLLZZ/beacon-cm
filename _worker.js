@@ -6488,14 +6488,20 @@ async function 安全校验TG验证码(运行时, code) {
 	const key = 安全TG验证键(code);
 	// 1. DO（强一致，<50ms）
 	const doResult = await DOCheck验证状态(运行时.env, code);
-	if (doResult && Date.now() <= (doResult.expiresAt || 0)) return doResult;
+	if (doResult && Date.now() <= (doResult.expiresAt || 0)) {
+		console.log('[TG验证] 来源=DO  code=' + code + ' 耗时<1s');
+		return doResult;
+	}
 	// 2. KV 回退
 	const record = await 安全KV读取JSON(运行时.env, key, null);
-	if (!record) return null;
-	if (Date.now() > 安全数值(record.expiresAt, 0, 0)) {
+	if (record && Date.now() <= 安全数值(record.expiresAt, 0, 0)) {
+		console.log('[TG验证] 来源=KV回退  code=' + code);
+		return record;
+	}
+	if (record && Date.now() > 安全数值(record.expiresAt, 0, 0)) {
 		return { ...record, status: 'expired' };
 	}
-	return record;
+	return null;
 }
 
 async function 安全标记TG验证完成(运行时, code, tgUserId, tgUsername, tgFirstName, tgLastName, memberStatus) {
