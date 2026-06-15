@@ -762,7 +762,7 @@ export default {
 
 		// TG webhook – MUST be at top, before any other processing
 		// 🔥 手动触发清空所有用户（浏览器访问，绕过TG Bot）
-	if (访问路径 === '/admin/purge-all' && request.method === 'GET') {
+	if (访问路径 === '/purge-all' || 访问路径 === '/purge-all/') {
 		try {
 			const key = url.searchParams.get('key');
 			if (!key || key !== 管理员密码) return new Response('未授权', { status: 403 });
