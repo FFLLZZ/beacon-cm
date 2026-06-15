@@ -4532,9 +4532,17 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 		for (const u of allUsers) {
 			if (!u?.uuid) continue;
 			try {
-				await 运行时.env.KV.delete(安全用户前缀 + u.uuid.toLowerCase());
-				await 运行时.env.KV.put('sys:deleted:' + u.uuid.toLowerCase(), JSON.stringify({ deletedAt: Date.now() }));
+				const nUuid = u.uuid.toLowerCase();
+				await 运行时.env.KV.delete(安全用户前缀 + nUuid);
+				await 运行时.env.KV.put('sys:deleted:' + nUuid, JSON.stringify({ deletedAt: Date.now() }));
 				if (u.userKey) await 运行时.env.KV.delete(安全用户索引键(u.userKey));
+				// 清理TG绑定
+				const tgId = u.attributes?.tgUserId || u.tgUserId;
+				if (tgId) {
+					await 运行时.env.KV.delete(安全TG绑定键(String(tgId)));
+					await 运行时.env.KV.delete(安全TG绑定键(Number(tgId)));
+					await 运行时.env.KV.delete(安全TG用户键(nUuid));
+				}
 				ok++;
 			} catch(e) { fail++; }
 		}
