@@ -4520,20 +4520,18 @@ async function 安全处理TG命令(env, 运行时, 消息文本, chatId, tgFrom
 			'<b>签到：</b>' + (checkedInToday ? '✅ 今日已签到' : '⬜ 今日未签到') + ' | 连续' + (tgRecord.checkInStreak || 0) + '天 | 累计' + (tgRecord.totalCheckIns || 0) + '次';
 	}
 
-	// ── 清理D1脏数据（管理员，删用户后仍能登录时用）──
+	// ── 设置墓碑标记阻止登录（D1过载时替代清理）──
 	if (匹配命令('bcpurge')) {
 		if (!tgFrom?.id) return '⚠️ 无法识别用户身份。';
 		const uuid = arg.trim().toLowerCase();
 		if (!安全UUID有效(uuid)) return '⚠️ 请提供有效的 UUID。\n用法：<code>/bcpurge 197a594c-6bb9-4b62-a6fc-56e4cd656f0b</code>';
+		// 先写KV墓碑标记（D1过载也能生效）
+		try { await 运行时.env.KV.put('sys:deleted:' + uuid, JSON.stringify({ deletedAt: Date.now() })); } catch(e) { return '⚠️ 墓碑写入失败：' + (e?.message || '未知错误'); }
+		// 尝试清理D1
 		if (DB实例) {
-			try {
-				await DB实例.prepare('DELETE FROM users WHERE uuid=?').bind(uuid).run();
-				return '✅ 已清理 D1 中 UUID <code>' + 安全掩码UUID(uuid) + '</code> 的记录。';
-			} catch(e) {
-				return '⚠️ D1 清理失败：' + (e?.message || '未知错误');
-			}
+			try { await DB实例.prepare('DELETE FROM users WHERE uuid=?').bind(uuid).run(); } catch(e) { /* D1过载静默 */ }
 		}
-		return '⚠️ D1 数据库不可用。';
+		return '✅ 已设置墓碑标记，UUID <code>' + 安全掩码UUID(uuid) + '</code> 将无法登录。';
 	}
 
 	// ── 手动解绑TG（管理员）──
@@ -6868,6 +6866,8 @@ async function 安全KV读取JSON(env, key, 默认值 = null) {
 	if (cached) return cached.value;
 	if (DB实例 && key.startsWith(安全用户前缀)) {
 		const uuid = key.slice(安全用户前缀.length);
+		// 检查墓碑标记（D1过载时仍能阻止已删用户登录）
+		try { const tombstone = await env.KV.get('sys:deleted:' + uuid); if (tombstone) return null; } catch(e) {}
 		try {
 			const row = await DB实例.prepare('SELECT * FROM users WHERE uuid=?').bind(uuid).first();
 			if (row) {
@@ -7589,6 +7589,8 @@ async function 安全删除用户账号(运行时, uuid, meta = {}, nowMs = Date
 	await 安全KV删除键(运行时.env, 安全用户木马索引键(sha224(normalizedUuid)));
 	await 安全KV删除键(运行时.env, 安全订阅状态键(normalizedUuid));
 	await 安全KV删除键(运行时.env, 安全活跃封禁键('uuid', normalizedUuid));
+	// 墓碑标记：D1过载时仍能阻止登录（安全KV读取JSON检查此标记后跳过D1回退）
+	await 安全KV写入JSON(运行时.env, 'sys:deleted:' + normalizedUuid, { deletedAt: nowMs });
 	// 清理D1用户记录（防止安全KV读取JSON的D1回退导致已删用户仍可登录）
 	if (DB实例) { try { await DB实例.prepare('DELETE FROM users WHERE uuid=?').bind(normalizedUuid).run(); } catch(e) { console.error('[删用户] D1删除失败:', e.message); } }
 	// 清理TG绑定记录，防止重新注册时误判已绑定
