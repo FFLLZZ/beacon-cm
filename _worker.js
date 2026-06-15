@@ -6447,9 +6447,49 @@ async function 安全生成TG验证码(运行时, verifyTimeout) {
 	return { code, expiresAt: record.expiresAt, timeout };
 }
 
+// ── DO 代理：获取TG验证DO stub（同isolate缓存）──
+let 验证DOStub缓存 = null;
+async function 获取验证DO(env) {
+	if (!env.TG_VERIFY_DO) return null;
+	if (!验证DOStub缓存) {
+		try {
+			const id = env.TG_VERIFY_DO.idFromName('tg-verify-v1');
+			验证DOStub缓存 = env.TG_VERIFY_DO.get(id);
+		} catch(e) { return null; }
+	}
+	return 验证DOStub缓存;
+}
+
+async function DOMark验证完成(env, code, data) {
+	try {
+		const stub = await 获取验证DO(env);
+		if (!stub) return false;
+		const resp = await stub.fetch('https://do/mark-verified', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ code, ...data }),
+		});
+		return resp.ok;
+	} catch(e) { return false; }
+}
+
+async function DOCheck验证状态(env, code) {
+	try {
+		const stub = await 获取验证DO(env);
+		if (!stub) return null;
+		const resp = await stub.fetch('https://do/check-status?code=' + encodeURIComponent(code));
+		if (!resp.ok) return null;
+		return await resp.json();
+	} catch(e) { return null; }
+}
+
 async function 安全校验TG验证码(运行时, code) {
 	if (!运行时 || !运行时.env || !code) return null;
 	const key = 安全TG验证键(code);
+	// 1. DO（强一致，<50ms）
+	const doResult = await DOCheck验证状态(运行时.env, code);
+	if (doResult && Date.now() <= (doResult.expiresAt || 0)) return doResult;
+	// 2. KV 回退
 	const record = await 安全KV读取JSON(运行时.env, key, null);
 	if (!record) return null;
 	if (Date.now() > 安全数值(record.expiresAt, 0, 0)) {
@@ -6492,6 +6532,8 @@ async function 安全标记TG验证完成(运行时, code, tgUserId, tgUsername,
 	record.memberStatus = memberStatus;
 	record.verifiedAt = Date.now();
 	await 安全KV写入JSON(运行时.env, key, record, Math.ceil((record.expiresAt - Date.now()) / 1000));
+	// 通知DO（即时全局可见）
+	DOMark验证完成(运行时.env, code, record).catch(() => {});
 	return record;
 }
 
@@ -11565,3 +11607,73 @@ export const __adminPlus = {
 	注入安全管理后台页面,
 	生成安全管理后台注入代码,
 };
+
+// ═══════════════════════════════════════════
+//  TG验证状态协调 — Durable Objects
+// ═══════════════════════════════════════════
+//  单实例，全局一致，写后立即可读，解决KV跨节点60s延迟
+export class TGVerifyDO {
+	constructor(state, env) {
+		this.state = state;
+		this.env = env;
+		this.状态表 = new Map();
+		// 每5分钟清理过期条目
+		this.state.blockGlobalMigration && this.state.blockGlobalMigration(true);
+		this.state.storage.setAlarm(Date.now() + 300000).catch(() => {});
+	}
+
+	async fetch(request) {
+		const url = new URL(request.url);
+		const path = url.pathname;
+
+		// POST /mark-verified — Webhook标记验证完成
+		if (path === '/mark-verified' && request.method === 'POST') {
+			const body = await request.json();
+			const { code, tgUserId, tgUsername, tgFirstName, tgLastName, expiresAt, memberStatus } = body;
+			if (!code) return new Response(JSON.stringify({ ok: false, error: 'missing code' }), { status: 400 });
+			const upperCode = code.toUpperCase();
+			const entry = {
+				status: 'verified',
+				tgUserId, tgUsername, tgFirstName, tgLastName,
+				expiresAt, memberStatus,
+				verifiedAt: Date.now(),
+			};
+			this.状态表.set(upperCode, entry);
+			// 10分钟后自动释放
+			setTimeout(() => this.状态表.delete(upperCode), 600000);
+			return new Response(JSON.stringify({ ok: true, entry }));
+		}
+
+		// GET /check-status?code=XXX — 轮询检测验证状态
+		if (path === '/check-status' && request.method === 'GET') {
+			const code = url.searchParams.get('code');
+			if (!code) return new Response(JSON.stringify(null), { status: 200 });
+			const upperCode = code.toUpperCase();
+			const entry = this.状态表.get(upperCode);
+			if (!entry || Date.now() >= (entry.expiresAt || 0)) {
+				if (entry) this.状态表.delete(upperCode);
+				return new Response(JSON.stringify(null), { status: 200 });
+			}
+			return new Response(JSON.stringify(entry), { status: 200 });
+		}
+
+		// POST /generate — 生成验证码（可选）
+		if (path === '/generate' && request.method === 'POST') {
+			const body = await request.json();
+			const timeout = body.timeout || 600;
+			// 验证码由调用方生成，DO只记录
+			return new Response(JSON.stringify({ ok: true }), { status: 200 });
+		}
+
+		return new Response(JSON.stringify({ ok: false }), { status: 404 });
+	}
+
+	async alarm() {
+		const now = Date.now();
+		for (const [code, entry] of this.状态表) {
+			if (now >= (entry.expiresAt || 0)) this.状态表.delete(code);
+		}
+		// 继续定时清理
+		this.state.storage.setAlarm(Date.now() + 300000).catch(() => {});
+	}
+}
