@@ -761,7 +761,35 @@ export default {
 		if (env.GO2SOCKS5) SOCKS5白名单 = await 整理成数组(env.GO2SOCKS5);
 
 		// TG webhook – MUST be at top, before any other processing
-		if (访问路径 === 'tg-webhook' || 访问路径 === 'tg-webhook/' || 访问路径.startsWith('tg-webhook?')) {
+		// 🔥 手动触发清空所有用户（浏览器访问，绕过TG Bot）
+	if (访问路径 === '/admin/purge-all' && request.method === 'GET') {
+		try {
+			const key = url.searchParams.get('key');
+			if (!key || key !== 管理员密码) return new Response('未授权', { status: 403 });
+			const 运行时 = await 创建安全运行时(env);
+			const allUsers = await 安全列出KV记录(运行时.env, 'sys:user:', 5000) || [];
+			for (const u of allUsers) {
+				if (!u?.uuid) continue;
+				try {
+					const nUuid = u.uuid.toLowerCase();
+					await 运行时.env.KV.delete(安全用户前缀 + nUuid);
+					await 运行时.env.KV.put('sys:deleted:' + nUuid, JSON.stringify({ deletedAt: Date.now() }));
+					if (u.userKey) await 运行时.env.KV.delete(安全用户索引键(u.userKey));
+					const tgId = u.attributes?.tgUserId || u.tgUserId;
+					if (tgId) { await 运行时.env.KV.delete(安全TG绑定键(String(tgId))); await 运行时.env.KV.delete(安全TG绑定键(Number(tgId))); await 运行时.env.KV.delete(安全TG用户键(nUuid)); }
+				} catch(e) {}
+			}
+			if (DB实例) {
+				try { await DB实例.prepare('DELETE FROM users').run(); } catch(e) {}
+				try { await DB实例.prepare('DELETE FROM online_heartbeat').run(); } catch(e) {}
+				try { await DB实例.prepare('DELETE FROM global_traffic').run(); } catch(e) {}
+				try { await DB实例.prepare('DELETE FROM daily_traffic').run(); } catch(e) {}
+			}
+			return new Response('清空完成：' + allUsers.length + ' 个用户', { status: 200 });
+		} catch(e) { return new Response('失败: ' + e.message, { status: 500 }); }
+	}
+
+	if (访问路径 === 'tg-webhook' || 访问路径 === 'tg-webhook/' || 访问路径.startsWith('tg-webhook?')) {
 			if (request.method === 'POST') {
 				let replyToChatId = null, replyToken = null;
 				try {
